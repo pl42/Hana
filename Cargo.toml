@@ -1,9 +1,9 @@
 [package]
-name = "ethdb"
+name = "hana"
 version = "0.1.0"
 authors = ["Peggy Liang <pgl1998@proton.me>"]
 edition = "2018"
-description = "Rust implementation of turbo-geth database format"
+description = "Ethereum client based on turbo-geth client architecture"
 license = "Apache-2.0"
 
 [dependencies]
