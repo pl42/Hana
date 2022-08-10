@@ -22,7 +22,11 @@ async fn main() -> anyhow::Result<()> {
 
     match opt {
         Opt::DbStats { chaindata } => {
-            let env = mdbx::Environment::new().open(&chaindata)?;
+            let env = hana::Environment::open(
+                mdbx::Environment::new(),
+                &chaindata,
+                &hana::tables::TABLE_MAP,
+            )?;
             for (table, size) in table_sizes(&env.begin_ro_txn()?)? {
                 println!("{} - {}", table, size);
             }
