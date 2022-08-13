@@ -5,6 +5,7 @@ authors = ["Peggy Liang <pgl1998@proton.me>"]
 edition = "2018"
 description = "Ethereum client based on turbo-geth client architecture"
 license = "Apache-2.0"
+default-run = "hana"
 
 [dependencies]
 anyhow = "1"
@@ -44,3 +45,11 @@ tracing = "0.1"
 [dev-dependencies]
 bytes-literal = { git = "https://github.com/vorot93/bytes-literal" }
 tokio = { version = "1", features = ["full"] }
+
+[[bin]]
+path = "bin/hana.rs"
+name = "hana"
+
+[[bin]]
+path = "bin/hana-toolbox.rs"
+name = "hana-toolbox"
