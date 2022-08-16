@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
             let env = hana::Environment::open_ro(
                 mdbx::Environment::new(),
                 &chaindata,
-                &hana::kv::tables::TABLE_MAP,
+                &hana::tables::TABLE_MAP,
             )?;
             let mut sizes = table_sizes(&env.begin_ro_txn()?)?
                 .into_iter()
