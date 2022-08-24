@@ -1,4 +1,4 @@
-use hana::table_sizes;
+use hana::mdbx_table_sizes;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -22,12 +22,12 @@ async fn main() -> anyhow::Result<()> {
 
     match opt {
         Opt::DbStats { chaindata, csv } => {
-            let env = hana::Environment::open_ro(
+            let env = hana::MdbxEnvironment::<mdbx::NoWriteMap>::open_ro(
                 mdbx::Environment::new(),
                 &chaindata,
                 &hana::kv::tables::TABLE_MAP,
             )?;
-            let mut sizes = table_sizes(&env.begin_ro_txn()?)?
+            let mut sizes = mdbx_table_sizes(&env.begin_ro_txn()?)?
                 .into_iter()
                 .collect::<Vec<_>>();
             sizes.sort_by_key(|(_, size)| *size);
