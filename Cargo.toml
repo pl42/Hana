@@ -83,3 +83,7 @@ name = "hana-rpc"
 [[bin]]
 path = "bin/hana-toolbox.rs"
 name = "hana-toolbox"
+
+[[bin]]
+path = "bin/blockhashes_stage.rs"
+name = "blockhashes_stage"
