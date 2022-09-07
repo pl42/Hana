@@ -1,3 +1,4 @@
+#![allow(clippy::suspicious_else_formatting)]
 use hana::{
     chain::{
         blockchain::Blockchain,

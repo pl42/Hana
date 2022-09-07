@@ -26,7 +26,7 @@ async fn blockhashes(chaindata: PathBuf) -> anyhow::Result<()> {
     let env = hana::MdbxEnvironment::<mdbx::NoWriteMap>::open_rw(
         mdbx::Environment::new(),
         &chaindata,
-        &hana::kv::tables::TABLE_MAP,
+        hana::kv::tables::CHAINDATA_TABLES.clone(),
     )?;
 
     let mut staged_sync = stagedsync::StagedSync::new();
@@ -38,7 +38,7 @@ async fn table_sizes(chaindata: PathBuf, csv: bool) -> anyhow::Result<()> {
     let env = hana::MdbxEnvironment::<mdbx::NoWriteMap>::open_ro(
         mdbx::Environment::new(),
         &chaindata,
-        2,
+        Default::default(),
     )?;
     let mut sizes = env
         .begin(0)
