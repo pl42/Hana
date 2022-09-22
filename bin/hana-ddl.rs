@@ -1,7 +1,4 @@
-use hana::{
-    downloader::{opts::Opts, Downloader},
-    sentry::chain_config,
-};
+use hana::downloader::{chain_config, opts::Opts, Downloader};
 
 use hana::kv;
 use std::sync::Arc;
