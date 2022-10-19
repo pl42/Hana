@@ -96,10 +96,6 @@ path = "bin/hana.rs"
 name = "hana"
 
 [[bin]]
-path = "bin/hana-ddl.rs"
-name = "hana-ddl"
-
-[[bin]]
 path = "bin/hana-rpc.rs"
 name = "hana-rpc"
 
