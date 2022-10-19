@@ -1,4 +1,5 @@
 use hana::{
+    binutil::HanaDataDir,
     kv::{
         tables,
         traits::{MutableKV, KV},
@@ -27,13 +28,13 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 #[derive(StructOpt)]
 #[structopt(name = "Hana", about = "Next-generation Ethereum implementation.")]
 pub struct Opt {
-    /// Path to Erigon chain database, where to get blocks from.
-    #[structopt(long, parse(from_os_str))]
-    pub erigon_chaindata: PathBuf,
+    /// Path to Erigon database directory, where to get blocks from.
+    #[structopt(long = "erigon-datadir", parse(from_os_str))]
+    pub erigon_data_dir: PathBuf,
 
-    /// Path to Hana chain database.
-    #[structopt(long, parse(from_os_str))]
-    pub chaindata: PathBuf,
+    /// Path to Hana database directory.
+    #[structopt(long = "datadir", help = "Database directory path", default_value)]
+    pub data_dir: HanaDataDir,
 
     /// Last block where to sync to.
     #[structopt(long)]
@@ -283,7 +284,7 @@ where
             if elapsed > Duration::from_secs(30) {
                 info!(
                     "Highest block {}, batch size: {} blocks with {} transactions, {} tx/sec",
-                    highest_block,
+                    highest_block.0,
                     extracted_blocks_num,
                     extracted_txs_num,
                     extracted_txs_num as f64
@@ -359,7 +360,7 @@ where
 #[allow(unreachable_code)]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let opt = Opt::from_args();
+    let opt: Opt = Opt::from_args();
 
     let filter = if std::env::var(EnvFilter::DEFAULT_ENV)
         .unwrap_or_default()
@@ -386,13 +387,17 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting Hana ({})", version_string());
 
+    let erigon_chain_data = opt.erigon_data_dir.join("chaindata");
+
     let erigon_db = Arc::new(hana::MdbxEnvironment::<mdbx::NoWriteMap>::open_ro(
         mdbx::Environment::new(),
-        &opt.erigon_chaindata,
+        &erigon_chain_data,
         hana::kv::tables::CHAINDATA_TABLES.clone(),
     )?);
 
-    let db = hana::kv::new_database(&opt.chaindata)?;
+    let hana_chain_data = opt.data_dir.join("chaindata");
+
+    let db = hana::kv::new_database(&hana_chain_data)?;
     async {
         let txn = db.begin_mutable().await?;
         if hana::genesis::initialize_genesis(&txn, hana::res::chainspec::MAINNET.clone()).await? {
