@@ -6,12 +6,6 @@ use std::{fmt::Display, path::PathBuf};
 
 pub struct HanaDataDir(pub PathBuf);
 
-impl HanaDataDir {
-    pub fn chain_data_dir(&self) -> PathBuf {
-        self.0.join("chaindata")
-    }
-}
-
 impl Default for HanaDataDir {
     fn default() -> Self {
         Self(
