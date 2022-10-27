@@ -128,7 +128,8 @@ async fn header_download(data_dir: HanaDataDir, opts: HeaderDownloadOpts) -> any
         opts.downloader_opts.headers_batch_size,
         sentry.clone(),
         sentry_status_provider,
-    );
+    )?;
+
     let db = hana::kv::new_database(&data_dir.chain_data_dir())?;
 
     let mut staged_sync = stagedsync::StagedSync::new();
