@@ -93,6 +93,7 @@ pub struct HeaderDownloadOpts {
 }
 
 async fn blockhashes(data_dir: HanaDataDir) -> anyhow::Result<()> {
+    std::fs::create_dir_all(&data_dir.0)?;
     let env = hana::MdbxEnvironment::<mdbx::NoWriteMap>::open_rw(
         mdbx::Environment::new(),
         &data_dir.chain_data_dir(),
@@ -130,6 +131,7 @@ async fn header_download(data_dir: HanaDataDir, opts: HeaderDownloadOpts) -> any
         sentry_status_provider,
     )?;
 
+    std::fs::create_dir_all(&data_dir.0)?;
     let db = hana::kv::new_database(&data_dir.chain_data_dir())?;
 
     let mut staged_sync = stagedsync::StagedSync::new();
