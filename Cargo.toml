@@ -106,9 +106,5 @@ path = "bin/hana-toolbox.rs"
 name = "hana-toolbox"
 
 [[bin]]
-path = "bin/blockhashes_stage.rs"
-name = "blockhashes_stage"
-
-[[bin]]
 path = "bin/consensus-tests.rs"
 name = "consensus-tests"
