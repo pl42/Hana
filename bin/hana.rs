@@ -331,7 +331,7 @@ where
                         body.uncles,
                         txs.into_iter()
                             .map(|v| {
-                                Ok(rlp::decode::<hana::models::Transaction>(&v)?
+                                Ok(rlp::decode::<hana::models::MessageWithSignature>(&v)?
                                     .encode()
                                     .to_vec())
                             })

@@ -202,7 +202,7 @@ async fn db_query(data_dir: HanaDataDir, table: String, key: Bytes) -> anyhow::R
     if let Some(v) = value {
         println!(
             "{:?}",
-            rlp::decode::<hana::models::Transaction>(&v)?.hash()
+            rlp::decode::<hana::models::MessageWithSignature>(&v)?.hash()
         );
     }
 
