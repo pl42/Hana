@@ -78,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
         .with(env_filter)
         .init();
 
-    let db = Arc::new(hana::MdbxEnvironment::<mdbx::NoWriteMap>::open_ro(
+    let db = Arc::new(hana::kv::mdbx::Environment::<mdbx::NoWriteMap>::open_ro(
         mdbx::Environment::new(),
         &opt.datadir,
         hana::kv::tables::CHAINDATA_TABLES.clone(),
