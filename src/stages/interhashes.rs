@@ -2,7 +2,10 @@ use crate::{
     accessors,
     kv::{tables, traits::MutableTransaction},
     models::*,
-    stagedsync::stage::{ExecOutput, Stage, StageInput, UnwindInput, UnwindOutput},
+    stagedsync::{
+        stage::{ExecOutput, Stage, StageInput, UnwindInput, UnwindOutput},
+        stages::*,
+    },
     stages::stage_util::should_do_clean_promotion,
     trie::{increment_intermediate_hashes, regenerate_intermediate_hashes},
     StageId,
@@ -13,6 +16,7 @@ use std::{cmp, sync::Arc};
 use tempfile::TempDir;
 use tracing::info;
 
+/// Generation of intermediate hashes for efficient computation of the state trie root
 #[derive(Debug)]
 pub struct Interhashes {
     temp_dir: Arc<TempDir>,
@@ -34,14 +38,14 @@ where
     RwTx: MutableTransaction<'db>,
 {
     fn id(&self) -> StageId {
-        StageId("Interhashes")
+        INTERMEDIATE_HASHES
     }
 
-    fn description(&self) -> &'static str {
-        "Generating intermediate hashes for efficient computation of the trie root"
-    }
-
-    async fn execute<'tx>(&self, tx: &'tx mut RwTx, input: StageInput) -> anyhow::Result<ExecOutput>
+    async fn execute<'tx>(
+        &mut self,
+        tx: &'tx mut RwTx,
+        input: StageInput,
+    ) -> anyhow::Result<ExecOutput>
     where
         'db: 'tx,
     {
@@ -97,7 +101,7 @@ where
     }
 
     async fn unwind<'tx>(
-        &self,
+        &mut self,
         tx: &'tx mut RwTx,
         input: UnwindInput,
     ) -> anyhow::Result<UnwindOutput>
