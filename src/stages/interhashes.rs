@@ -7,14 +7,14 @@ use crate::{
         stages::*,
     },
     stages::stage_util::should_do_clean_promotion,
-    trie::regenerate_intermediate_hashes,
+    trie::{increment_intermediate_hashes, regenerate_intermediate_hashes},
     StageId,
 };
 use anyhow::{format_err, Context};
 use async_trait::async_trait;
 use std::{cmp, sync::Arc};
 use tempfile::TempDir;
-use tracing::*;
+use tracing::info;
 
 /// Generation of intermediate hashes for efficient computation of the state trie root
 #[derive(Debug)]
@@ -77,24 +77,18 @@ where
             )
             .await?
             {
-                debug!("Regenerating intermediate hashes");
                 regenerate_intermediate_hashes(tx, self.temp_dir.as_ref(), Some(block_state_root))
                     .await
                     .with_context(|| "Failed to generate interhashes")?
             } else {
-                debug!("Incrementing intermediate hashes");
-                regenerate_intermediate_hashes(tx, self.temp_dir.as_ref(), Some(block_state_root))
-                    .await
-                    .with_context(|| "Failed to generate interhashes")?
-                // TODO: fix increment
-                // increment_intermediate_hashes(
-                //     tx,
-                //     self.temp_dir.as_ref(),
-                //     past_progress,
-                //     Some(block_state_root),
-                // )
-                // .await
-                // .with_context(|| "Failed to update interhashes")?
+                increment_intermediate_hashes(
+                    tx,
+                    self.temp_dir.as_ref(),
+                    past_progress,
+                    Some(block_state_root),
+                )
+                .await
+                .with_context(|| "Failed to update interhashes")?
             };
 
             info!("Block #{} state root OK: {:?}", max_block, trie_root)
