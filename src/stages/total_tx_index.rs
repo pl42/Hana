@@ -1,5 +1,5 @@
 use crate::{
-    kv::{tables, traits::*},
+    kv::{mdbx::*, tables},
     stagedsync::{stage::*, stages::*},
     StageId,
 };
@@ -11,9 +11,9 @@ use tracing::*;
 pub struct TotalTxIndex;
 
 #[async_trait]
-impl<'db, RwTx> Stage<'db, RwTx> for TotalTxIndex
+impl<'db, E> Stage<'db, E> for TotalTxIndex
 where
-    RwTx: MutableTransaction<'db>,
+    E: EnvironmentKind,
 {
     fn id(&self) -> StageId {
         TOTAL_TX_INDEX
@@ -21,7 +21,7 @@ where
 
     async fn execute<'tx>(
         &mut self,
-        tx: &'tx mut RwTx,
+        tx: &'tx mut MdbxTransaction<'db, RW, E>,
         input: StageInput,
     ) -> anyhow::Result<ExecOutput>
     where
@@ -29,7 +29,7 @@ where
     {
         let prev_progress = input.stage_progress.unwrap_or_default();
 
-        let mut cumulative_index_cur = tx.mutable_cursor(tables::TotalTx).await?;
+        let mut cumulative_index_cur = tx.cursor(tables::TotalTx)?;
 
         let starting_block = prev_progress + 1;
         let max_block = input
@@ -39,25 +39,30 @@ where
 
         if max_block >= starting_block {
             let mut tx_num = cumulative_index_cur
-                .seek_exact(prev_progress)
-                .await?
-                .unwrap()
+                .seek_exact(prev_progress)?
+                .ok_or_else(|| {
+                    format_err!("Cumulative index not found for block #{prev_progress}")
+                })?
                 .1;
 
             for block_num in starting_block..=max_block {
                 if block_num.0 % 500_000 == 0 {
-                    info!("Building total tx index for block {}", block_num);
+                    info!("Building total tx index for block {block_num}");
                 }
 
-                let canonical_hash = tx.get(tables::CanonicalHeader, block_num).await?.unwrap();
+                let canonical_hash =
+                    tx.get(tables::CanonicalHeader, block_num)?.ok_or_else(|| {
+                        format_err!("Canonical hash not found for block #{block_num}")
+                    })?;
                 let body = tx
-                    .get(tables::BlockBody, (block_num, canonical_hash))
-                    .await?
-                    .unwrap();
+                    .get(tables::BlockBody, (block_num, canonical_hash))?
+                    .ok_or_else(|| {
+                        format_err!("Body not found for block #{block_num}/{canonical_hash:?}")
+                    })?;
 
                 tx_num += body.tx_amount as u64;
 
-                cumulative_index_cur.append(block_num, tx_num).await?;
+                cumulative_index_cur.append(block_num, tx_num)?;
             }
         }
 
@@ -69,17 +74,17 @@ where
 
     async fn unwind<'tx>(
         &mut self,
-        tx: &'tx mut RwTx,
+        tx: &'tx mut MdbxTransaction<'db, RW, E>,
         input: UnwindInput,
     ) -> anyhow::Result<UnwindOutput>
     where
         'db: 'tx,
     {
-        let mut cumulative_index_cur = tx.mutable_cursor(tables::TotalTx).await?;
+        let mut cumulative_index_cur = tx.cursor(tables::TotalTx)?;
 
-        while let Some((block_num, _)) = cumulative_index_cur.last().await? {
+        while let Some((block_num, _)) = cumulative_index_cur.last()? {
             if block_num > input.unwind_to {
-                cumulative_index_cur.delete_current().await?;
+                cumulative_index_cur.delete_current()?;
             } else {
                 break;
             }

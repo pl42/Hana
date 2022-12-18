@@ -11,9 +11,8 @@ use super::{
 };
 use crate::{
     kv,
-    kv::traits::*,
     models::*,
-    sentry::{
+    sentry_connector::{
         chain_config, sentry_client_connector,
         sentry_client_connector::SentryClientConnectorTest,
         sentry_client_mock::SentryClientMock,
@@ -52,7 +51,7 @@ async fn run_downloader(
     }
 
     let db = kv::new_mem_database()?;
-    let db_transaction = db.begin_mutable().await?;
+    let db_transaction = db.begin_mutable()?;
 
     let ui_system = Arc::new(AsyncMutex::new(UISystem::new()));
 
@@ -67,12 +66,10 @@ async fn run_downloader(
         .await?;
 
     if let Some(unwind_request) = report.run_state.unwind_request.take() {
-        downloader
-            .unwind_finalize(&db_transaction, unwind_request)
-            .await?;
+        downloader.unwind_finalize(&db_transaction, unwind_request)?;
     }
 
-    db_transaction.commit().await?;
+    db_transaction.commit()?;
 
     {
         sentry.write().await.stop().await?;
@@ -222,6 +219,7 @@ async fn noop() {
     test.run().await.unwrap();
 }
 
+/// see docs/testing.md
 struct DownloaderTestDecl<'t> {
     // SentryClientMock descriptor
     pub sentry: &'t str,
@@ -462,7 +460,6 @@ impl HeaderGenerator {
         match status {
             HeaderSliceStatus::Empty => None,
             HeaderSliceStatus::Waiting => None,
-            HeaderSliceStatus::Refetch => None,
             _ => Some(self.generate_slice_headers(start_block_num)),
         }
     }
@@ -529,6 +526,8 @@ impl HeaderGenerator {
         }
     }
 }
+
+/// see docs/testing.md
 
 #[tokio::test]
 async fn save_verified() {
