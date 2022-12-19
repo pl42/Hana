@@ -4,7 +4,7 @@ use super::headers::{
 };
 use crate::{
     models::BlockNumber,
-    sentry_connector::{
+    sentry::{
         block_id,
         messages::{GetBlockHeadersMessage, GetBlockHeadersMessageParams, Message},
         sentry_client::PeerFilter,

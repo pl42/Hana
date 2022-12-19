@@ -1,10 +1,8 @@
 use crate::{
-    kv::{
-        mdbx::*,
-        tables::{self, HeaderKey},
-    },
+    kv,
+    kv::tables::HeaderKey,
     models::*,
-    sentry_connector::{chain_config::ChainConfig, sentry_client::Status, sentry_client_connector},
+    sentry::{chain_config::ChainConfig, sentry_client::Status, sentry_client_connector},
 };
 use std::fmt;
 use tokio::sync::watch;
@@ -46,21 +44,24 @@ impl SentryStatusProvider {
         Box::pin(stream)
     }
 
-    fn read_status<E: EnvironmentKind>(
+    async fn read_status<'db, RwTx: kv::traits::Transaction<'db>>(
         &self,
-        tx: &MdbxTransaction<'_, RW, E>,
+        tx: &RwTx,
     ) -> anyhow::Result<Status> {
         let header_hash = tx
-            .get(tables::LastHeader, Default::default())?
+            .get(kv::tables::LastHeader, Default::default())
+            .await?
             .ok_or(SentryStatusProviderError::StatusDataNotFound)?;
 
         let block_num = tx
-            .get(tables::HeaderNumber, header_hash)?
+            .get(kv::tables::HeaderNumber, header_hash)
+            .await?
             .ok_or(SentryStatusProviderError::StatusDataNotFound)?;
 
         let header_key: HeaderKey = (block_num, header_hash);
         let total_difficulty = tx
-            .get(tables::HeadersTotalDifficulty, header_key)?
+            .get(kv::tables::HeadersTotalDifficulty, header_key)
+            .await?
             .ok_or(SentryStatusProviderError::StatusDataNotFound)?;
 
         let status = Status {
@@ -73,11 +74,13 @@ impl SentryStatusProvider {
         Ok(status)
     }
 
-    pub fn update<E: EnvironmentKind>(
+    pub async fn update<'db, RwTx: kv::traits::Transaction<'db>>(
         &self,
-        tx: &MdbxTransaction<'_, RW, E>,
+        tx: &RwTx,
     ) -> anyhow::Result<()> {
-        match self.read_status(tx) {
+        let result = self.read_status(tx).await;
+
+        match result {
             Ok(status) => {
                 self.sender.send(status)?;
                 Ok(())

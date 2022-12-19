@@ -1,16 +1,15 @@
 #![feature(
     bool_to_option,
-    const_for,
-    const_mut_refs,
+    destructuring_assignment,
+    entry_insert,
     generator_trait,
     generators,
+    generic_associated_types,
     let_else,
     map_first_last,
     never_type,
-    poll_ready,
     step_trait,
-    type_alias_impl_trait,
-    adt_const_params
+    type_alias_impl_trait
 )]
 #![recursion_limit = "256"]
 #![allow(
@@ -35,7 +34,6 @@ pub mod kv;
 pub mod models;
 pub mod res;
 pub mod sentry;
-pub mod sentry_connector;
 pub mod stagedsync;
 pub mod stages;
 mod state;
