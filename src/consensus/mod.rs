@@ -5,7 +5,6 @@ mod ethash;
 pub use self::{blockchain::*, ethash::*};
 use crate::{models::*, State};
 use anyhow::bail;
-use derive_more::{Display, From};
 use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
@@ -147,14 +146,6 @@ impl Display for ValidationError {
 }
 
 impl std::error::Error for ValidationError {}
-
-#[derive(Debug, Display, From)]
-pub enum DuoError {
-    Validation(Box<ValidationError>),
-    Internal(anyhow::Error),
-}
-
-impl std::error::Error for DuoError {}
 
 pub fn pre_validate_transaction(
     txn: &Message,
