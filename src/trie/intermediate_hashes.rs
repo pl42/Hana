@@ -1,6 +1,5 @@
 #![allow(clippy::question_mark)]
 use crate::{
-    consensus::{DuoError, ValidationError},
     crypto::keccak256,
     etl::collector::{TableCollector, OPTIMAL_BUFFER_CAPACITY},
     kv::{mdbx::*, tables, traits::*},
@@ -12,6 +11,7 @@ use crate::{
         util::has_prefix,
     },
 };
+use anyhow::{bail, Result};
 use parking_lot::Mutex;
 use std::marker::PhantomData;
 use tempfile::TempDir;
@@ -108,7 +108,7 @@ where
         cursor: &'cu mut MdbxCursor<'tx, RW, T>,
         changed: &'ps mut PrefixSet,
         prefix: &[u8],
-    ) -> anyhow::Result<Cursor<'cu, 'tx, 'ps, T>> {
+    ) -> Result<Cursor<'cu, 'tx, 'ps, T>> {
         let mut new_cursor = Self {
             cursor: Mutex::new(cursor),
             changed,
@@ -121,7 +121,7 @@ where
         Ok(new_cursor)
     }
 
-    fn next(&mut self) -> anyhow::Result<()> {
+    fn next(&mut self) -> Result<()> {
         if self.stack.is_empty() {
             return Ok(()); // end-of-tree
         }
@@ -179,7 +179,7 @@ where
         Some(pack_nibbles(k.as_ref().unwrap()))
     }
 
-    fn consume_node(&mut self, to: &[u8], exact: bool) -> anyhow::Result<()> {
+    fn consume_node(&mut self, to: &[u8], exact: bool) -> Result<()> {
         let db_key = [self.prefix.as_slice(), to].concat().to_vec();
         let entry = if exact {
             self.cursor.lock().seek_exact(db_key)?
@@ -234,7 +234,7 @@ where
     fn move_to_next_sibling(
         &mut self,
         allow_root_to_child_nibble_within_subnode: bool,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         if self.stack.is_empty() {
             return Ok(());
         }
@@ -335,7 +335,7 @@ where
         instance
     }
 
-    fn calculate_root(&mut self, changed: &mut PrefixSet) -> anyhow::Result<H256> {
+    fn calculate_root(&mut self, changed: &mut PrefixSet) -> Result<H256> {
         let mut state = self.txn.cursor(tables::HashedAccount)?;
         let mut trie_db_cursor = self.txn.cursor(tables::TrieAccount)?;
 
@@ -384,11 +384,7 @@ where
         Ok(self.hb.root_hash())
     }
 
-    fn calculate_storage_root(
-        &self,
-        key_with_inc: &[u8],
-        changed: &mut PrefixSet,
-    ) -> anyhow::Result<H256> {
+    fn calculate_storage_root(&self, key_with_inc: &[u8], changed: &mut PrefixSet) -> Result<H256> {
         let mut state = self.txn.cursor(tables::HashedStorage)?;
         let mut trie_db_cursor = self.txn.cursor(tables::TrieStorage)?;
 
@@ -444,7 +440,7 @@ fn do_increment_intermediate_hashes<'db, 'tx, E>(
     etl_dir: &TempDir,
     expected_root: Option<H256>,
     changed: &mut PrefixSet,
-) -> Result<H256, DuoError>
+) -> Result<H256>
 where
     'db: 'tx,
     E: EnvironmentKind,
@@ -458,15 +454,12 @@ where
         loader.calculate_root(changed)?
     };
 
-    if let Some(expected_root) = expected_root {
-        if expected_root != root {
-            return Err(DuoError::Validation(Box::new(
-                ValidationError::WrongStateRoot {
-                    expected: expected_root,
-                    got: root,
-                },
-            )));
-        }
+    if expected_root.is_some() && expected_root.unwrap() != root {
+        bail!(
+            "Wrong state root: expected {}, got {}",
+            expected_root.unwrap(),
+            root
+        );
     }
 
     let mut target = txn.cursor(tables::TrieAccount.erased())?;
@@ -481,7 +474,7 @@ where
 fn gather_changes<'db, 'tx, K, E>(
     txn: &'tx MdbxTransaction<'db, K, E>,
     from: BlockNumber,
-) -> anyhow::Result<PrefixSet>
+) -> Result<PrefixSet>
 where
     'db: 'tx,
     K: TransactionKind,
@@ -525,7 +518,7 @@ pub fn increment_intermediate_hashes<'db, 'tx, E>(
     etl_dir: &TempDir,
     from: BlockNumber,
     expected_root: Option<H256>,
-) -> Result<H256, DuoError>
+) -> Result<H256>
 where
     'db: 'tx,
     E: EnvironmentKind,
@@ -538,7 +531,7 @@ pub fn regenerate_intermediate_hashes<'db, 'tx, E>(
     txn: &'tx MdbxTransaction<'db, RW, E>,
     etl_dir: &TempDir,
     expected_root: Option<H256>,
-) -> Result<H256, DuoError>
+) -> Result<H256>
 where
     'db: 'tx,
     E: EnvironmentKind,
