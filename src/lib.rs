@@ -1,9 +1,10 @@
 #![feature(
     bool_to_option,
-    const_for,
-    const_mut_refs,
+    destructuring_assignment,
+    entry_insert,
     generator_trait,
     generators,
+    generic_associated_types,
     let_else,
     map_first_last,
     never_type,

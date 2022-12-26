@@ -1,5 +1,5 @@
 use crate::{
-    kv::{mdbx::*, tables},
+    kv::{tables, traits::*},
     models::*,
 };
 use std::fmt::Display;
@@ -45,26 +45,19 @@ impl Display for StageId {
 
 impl StageId {
     #[instrument]
-    pub fn get_progress<'db, K, E>(
+    pub async fn get_progress<'db, Tx: Transaction<'db>>(
         &self,
-        tx: &MdbxTransaction<'db, K, E>,
-    ) -> anyhow::Result<Option<BlockNumber>>
-    where
-        K: TransactionKind,
-        E: EnvironmentKind,
-    {
-        tx.get(tables::SyncStage, *self)
+        tx: &Tx,
+    ) -> anyhow::Result<Option<BlockNumber>> {
+        tx.get(tables::SyncStage, *self).await
     }
 
     #[instrument]
-    pub fn save_progress<'db, E>(
+    pub async fn save_progress<'db, RwTx: MutableTransaction<'db>>(
         &self,
-        tx: &MdbxTransaction<'db, RW, E>,
+        tx: &RwTx,
         block: BlockNumber,
-    ) -> anyhow::Result<()>
-    where
-        E: EnvironmentKind,
-    {
-        tx.set(tables::SyncStage, *self, block)
+    ) -> anyhow::Result<()> {
+        tx.set(tables::SyncStage, *self, block).await
     }
 }

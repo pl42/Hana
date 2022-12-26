@@ -40,7 +40,7 @@ pub enum Revision {
 }
 
 impl Revision {
-    pub const fn iter() -> [Revision; Revision::len()] {
+    pub fn iter() -> impl IntoIterator<Item = Self> {
         [
             Self::Frontier,
             Self::Homestead,

@@ -461,8 +461,10 @@ fn log() {
             .status(StatusCode::Success)
             .gas_used((421 + n * 375) as i64)
             .inspect_host(move |host, _| {
-                assert_eq!(host.recorded.logs.len(), 1);
-                let last_log = host.recorded.logs.last().unwrap();
+                let r = host.recorded.lock();
+
+                assert_eq!(r.logs.len(), 1);
+                let last_log = r.logs.last().unwrap();
                 assert_eq!(&*last_log.data, &hex!("7700") as &[u8]);
                 assert_eq!(last_log.topics.len(), n);
                 for i in 0..n {
@@ -483,8 +485,9 @@ fn log0_empty() {
                 .opcode(OpCode::LOG0),
         )
         .inspect_host(|host, _| {
-            assert_eq!(host.recorded.logs.len(), 1);
-            let last_log = host.recorded.logs.last().unwrap();
+            let r = host.recorded.lock();
+            assert_eq!(r.logs.len(), 1);
+            let last_log = r.logs.last().unwrap();
             assert_eq!(last_log.topics.len(), 0);
             assert_eq!(last_log.data.len(), 0);
         })
@@ -514,7 +517,7 @@ fn log_data_cost() {
             .gas_used(cost as i64)
             .status(StatusCode::Success)
             .inspect_host(|host, _| {
-                assert_eq!(host.recorded.logs.len(), 1);
+                assert_eq!(host.recorded.lock().logs.len(), 1);
             })
             .check()
     }
@@ -529,7 +532,7 @@ fn selfdestruct() {
         .gas_used(5003)
         .inspect_host(|host, _| {
             assert_eq!(
-                host.recorded.selfdestructs,
+                host.recorded.lock().selfdestructs,
                 [SelfdestructRecord {
                     selfdestructed: Address::zero(),
                     beneficiary: Address::from(hex!("0000000000000000000000000000000000000009"))
@@ -545,7 +548,7 @@ fn selfdestruct() {
         .gas_used(3)
         .inspect_host(|host, _| {
             assert_eq!(
-                host.recorded.selfdestructs,
+                host.recorded.lock().selfdestructs,
                 [SelfdestructRecord {
                     selfdestructed: Address::zero(),
                     beneficiary: Address::from(hex!("0000000000000000000000000000000000000007"))
@@ -561,7 +564,7 @@ fn selfdestruct() {
         .gas_used(30003)
         .inspect_host(|host, _| {
             assert_eq!(
-                host.recorded.selfdestructs,
+                host.recorded.lock().selfdestructs,
                 [SelfdestructRecord {
                     selfdestructed: Address::zero(),
                     beneficiary: Address::from(hex!("0000000000000000000000000000000000000008"))
@@ -581,6 +584,7 @@ fn selfdestruct_with_balance() {
     let mut t = EvmTester::new()
         .code(code)
         .destination(hex!("000000000000000000000000000000000000005e"))
+        .collect_traces(true)
         .apply_host_fn(|host, msg| {
             host.accounts.entry(msg.recipient).or_default().balance = U256::ZERO;
         });
@@ -590,7 +594,9 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::Success)
         .gas_used(3)
         .inspect_host(|host, msg| {
-            assert_eq!(host.recorded.account_accesses, [msg.recipient]); // Selfdestruct.
+            let r = host.recorded.lock();
+
+            assert_eq!(r.account_accesses, [msg.recipient]); // Selfdestruct.
         })
         .check();
 
@@ -600,7 +606,7 @@ fn selfdestruct_with_balance() {
         .gas_used(30003)
         .inspect_host(move |host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Exists?
                     beneficiary,
@@ -617,7 +623,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::OutOfGas)
         .inspect_host(move |host, _| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Exists?
                     beneficiary
@@ -632,7 +638,7 @@ fn selfdestruct_with_balance() {
         .gas_used(5003)
         .inspect_host(move |host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Balance.
                     msg.recipient,
@@ -648,7 +654,7 @@ fn selfdestruct_with_balance() {
         .gas(5002)
         .status(StatusCode::OutOfGas)
         .inspect_host(|host, _| {
-            assert_eq!(host.recorded.account_accesses, []);
+            assert_eq!(host.recorded.lock().account_accesses, []);
         })
         .check();
 
@@ -662,7 +668,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::Success)
         .inspect_host(|host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Selfdestruct.
                     msg.recipient
@@ -677,7 +683,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::Success)
         .inspect_host(move |host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Exists?
                     beneficiary,
@@ -694,7 +700,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::OutOfGas)
         .inspect_host(move |host, _| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Exists?
                     beneficiary,
@@ -709,7 +715,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::Success)
         .inspect_host(move |host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Balance
                     msg.recipient,
@@ -728,7 +734,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::OutOfGas)
         .inspect_host(move |host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Balance
                     msg.recipient,
@@ -750,7 +756,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::Success)
         .inspect_host(|host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Selfdestruct.
                     msg.recipient,
@@ -765,7 +771,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::Success)
         .inspect_host(move |host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Exists?
                     beneficiary,
@@ -781,7 +787,7 @@ fn selfdestruct_with_balance() {
         .gas(5002)
         .status(StatusCode::OutOfGas)
         .inspect_host(move |host, _| {
-            assert_eq!(host.recorded.account_accesses, []);
+            assert_eq!(host.recorded.lock().account_accesses, []);
         })
         .check();
 
@@ -791,7 +797,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::Success)
         .inspect_host(move |host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Balance.
                     msg.recipient,
@@ -807,7 +813,7 @@ fn selfdestruct_with_balance() {
         .gas(5002)
         .status(StatusCode::OutOfGas)
         .inspect_host(|host, _| {
-            assert_eq!(host.recorded.account_accesses, []);
+            assert_eq!(host.recorded.lock().account_accesses, []);
         })
         .check();
 
@@ -821,7 +827,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::Success)
         .inspect_host(|host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Selfdestruct
                     msg.recipient
@@ -836,7 +842,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::Success)
         .inspect_host(move |host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Exists?
                     beneficiary,
@@ -852,7 +858,7 @@ fn selfdestruct_with_balance() {
         .gas(5002)
         .status(StatusCode::OutOfGas)
         .inspect_host(|host, _| {
-            assert_eq!(host.recorded.account_accesses, []);
+            assert_eq!(host.recorded.lock().account_accesses, []);
         })
         .check();
 
@@ -862,7 +868,7 @@ fn selfdestruct_with_balance() {
         .status(StatusCode::Success)
         .inspect_host(move |host, msg| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [
                     // Balance
                     msg.recipient,
@@ -879,7 +885,7 @@ fn selfdestruct_with_balance() {
         .gas(5002)
         .status(StatusCode::OutOfGas)
         .inspect_host(|host, _| {
-            assert_eq!(host.recorded.account_accesses, []);
+            assert_eq!(host.recorded.lock().account_accesses, []);
         })
         .check();
 }
@@ -905,7 +911,7 @@ fn blockhash() {
             assert_eq!(output[13], 0);
         })
         .inspect_host(|host, _| {
-            assert_eq!(host.recorded.blockhashes, [] as [u64; 0]);
+            assert_eq!(host.recorded.lock().blockhashes, [] as [u64; 0]);
         })
         .check();
 
@@ -918,7 +924,7 @@ fn blockhash() {
             assert_eq!(output[13], 0);
         })
         .inspect_host(|host, _| {
-            assert_eq!(host.recorded.blockhashes, [] as [u64; 0]);
+            assert_eq!(host.recorded.lock().blockhashes, [] as [u64; 0]);
         })
         .check();
 
@@ -930,7 +936,7 @@ fn blockhash() {
         assert_eq!(output[13], 0x13);
     })
     .inspect_host(|host, _| {
-        assert_eq!(host.recorded.blockhashes, [0]);
+        assert_eq!(host.recorded.lock().blockhashes, [0]);
     })
     .check();
 }
@@ -955,9 +961,9 @@ fn extcode() {
             assert_eq!(output.len(), 4);
             assert_eq!(output[..3], host.accounts[&addr].code[..3]);
             assert_eq!(output[3], 0);
-            assert_eq!(host.recorded.account_accesses.len(), 2);
-            assert_eq!(host.recorded.account_accesses[0].0[19], 0xfe);
-            assert_eq!(host.recorded.account_accesses[1].0[19], 0xfe);
+            assert_eq!(host.recorded.lock().account_accesses.len(), 2);
+            assert_eq!(host.recorded.lock().account_accesses[0].0[19], 0xfe);
+            assert_eq!(host.recorded.lock().account_accesses[1].0[19], 0xfe);
         })
         .check()
 }
@@ -1118,7 +1124,7 @@ fn extcodecopy_nonzero_index() {
         .output_data(hex!("c000"))
         .inspect_host(|host, _| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [hex!("000000000000000000000000000000000000000a").into()]
             );
         })
@@ -1146,7 +1152,7 @@ fn extcodecopy_fill_tail() {
         .output_data(hex!("ff00"))
         .inspect_host(|host, _| {
             assert_eq!(
-                host.recorded.account_accesses,
+                host.recorded.lock().account_accesses,
                 [hex!("000000000000000000000000000000000000000a").into()]
             );
         })

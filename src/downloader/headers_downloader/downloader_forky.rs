@@ -13,7 +13,8 @@ use super::{
     verification::header_slice_verifier::HeaderSliceVerifier,
 };
 use crate::{
-    kv::{self, mdbx::*, tables::HeaderKey},
+    kv,
+    kv::tables::HeaderKey,
     models::BlockNumber,
     sentry::{chain_config::ChainConfig, sentry_client_reactor::*},
 };
@@ -47,22 +48,18 @@ impl DownloaderForky {
         }
     }
 
-    fn load_header_slices<'tx, 'db: 'tx, K, E>(
-        db_transaction: &'tx MdbxTransaction<'db, K, E>,
+    async fn load_header_slices<'tx, 'db: 'tx>(
+        db_transaction: &'tx impl kv::traits::MutableTransaction<'db>,
         start_block_num: BlockNumber,
         max_blocks_count: usize,
-    ) -> anyhow::Result<HeaderSlices>
-    where
-        K: TransactionKind,
-        E: EnvironmentKind,
-    {
+    ) -> anyhow::Result<HeaderSlices> {
         let max_slices = max_blocks_count / header_slices::HEADER_SLICE_SIZE;
         let max_blocks_count = max_slices * header_slices::HEADER_SLICE_SIZE;
 
         let mut header_keys = Vec::<HeaderKey>::with_capacity(max_blocks_count);
         for i in 0..max_blocks_count {
             let num = BlockNumber(start_block_num.0 + i as u64);
-            if let Some(hash) = db_transaction.get(kv::tables::CanonicalHeader, num)? {
+            if let Some(hash) = db_transaction.get(kv::tables::CanonicalHeader, num).await? {
                 header_keys.push((num, hash));
             } else {
                 break;
@@ -76,7 +73,7 @@ impl DownloaderForky {
             let mut is_full_slice = true;
 
             for header_key in slice_header_keys {
-                if let Some(header) = db_transaction.get(kv::tables::Header, *header_key)? {
+                if let Some(header) = db_transaction.get(kv::tables::Header, *header_key).await? {
                     let known_hash = header_key.1;
                     let header = BlockHeader::new(header, known_hash);
                     headers.push(header);
@@ -129,12 +126,12 @@ impl DownloaderForky {
         count
     }
 
-    fn build_stages<'downloader, 'db: 'downloader, E: EnvironmentKind>(
+    fn build_stages<'downloader, 'db: 'downloader, RwTx: kv::traits::MutableTransaction<'db>>(
         &'downloader self,
         group_name: &str,
         stages: &mut DownloaderStageLoop<'downloader>,
         header_slices: &Arc<HeaderSlices>,
-        save_stage: SaveStage<'downloader, 'db, E>,
+        save_stage: SaveStage<'downloader, RwTx>,
     ) {
         let sentry = self.sentry.clone();
 
@@ -161,9 +158,9 @@ impl DownloaderForky {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn run<'downloader, 'db: 'downloader, E: EnvironmentKind>(
+    pub async fn run<'downloader, 'db: 'downloader, RwTx: kv::traits::MutableTransaction<'db>>(
         &'downloader self,
-        db_transaction: &'downloader MdbxTransaction<'db, RW, E>,
+        db_transaction: &'downloader RwTx,
         progress_start_block_num: BlockNumber,
         max_blocks_count: usize,
         no_forks_final_block_num: BlockNumber,
@@ -217,7 +214,7 @@ impl DownloaderForky {
             None
         };
         let start_block_parent_header = match start_block_parent_num {
-            Some(num) => SaveStage::load_canonical_header_by_num(num, db_transaction)?,
+            Some(num) => SaveStage::load_canonical_header_by_num(num, db_transaction).await?,
             None => None,
         };
         if start_block_parent_num.is_some() && start_block_parent_header.is_none() {
@@ -228,7 +225,8 @@ impl DownloaderForky {
             previous_run_header_slices
         } else {
             let loaded_header_slices =
-                Self::load_header_slices(db_transaction, start_block_num, forky_max_blocks_count)?;
+                Self::load_header_slices(db_transaction, start_block_num, forky_max_blocks_count)
+                    .await?;
             Arc::new(loaded_header_slices)
         };
 
@@ -247,14 +245,14 @@ impl DownloaderForky {
             start_block_parent_header,
         );
 
-        let save_stage = SaveStage::new(
+        let save_stage = SaveStage::<RwTx>::new(
             header_slices.clone(),
             db_transaction,
-            save_stage::SaveOrder::Random,
+            save_stage::SaveOrder::Monotonic,
             true,
         );
 
-        let fork_save_stage = SaveStage::new(
+        let fork_save_stage = SaveStage::<RwTx>::new(
             fork_header_slices.clone(),
             db_transaction,
             save_stage::SaveOrder::Random,

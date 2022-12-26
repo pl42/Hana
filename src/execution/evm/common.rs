@@ -6,7 +6,7 @@ use strum_macros::Display;
 
 /// Message status code.
 #[must_use]
-#[derive(Clone, Copy, Debug, Display, PartialEq)]
+#[derive(Clone, Debug, Display, PartialEq)]
 pub enum StatusCode {
     /// Execution finished with success.
     #[strum(serialize = "success")]
@@ -88,7 +88,7 @@ pub enum StatusCode {
 
     /// EVM implementation generic internal error.
     #[strum(serialize = "internal error")]
-    InternalError(&'static str),
+    InternalError(String),
 }
 
 /// The kind of call-like instruction.
@@ -211,17 +211,17 @@ impl From<SuccessfulOutput> for Output {
     }
 }
 
-#[inline]
+#[inline(always)]
 pub(crate) fn u256_to_address(v: U256) -> Address {
     H256(v.to_be_bytes()).into()
 }
 
-#[inline]
+#[inline(always)]
 pub(crate) fn address_to_u256(v: Address) -> U256 {
     U256::from_be_bytes(H256::from(v).0)
 }
 
-#[inline]
+#[inline(always)]
 pub(crate) fn u256_from_slice(v: &[u8]) -> U256 {
     debug_assert!(v.len() <= 32, "invalid len");
     match v.len() {
