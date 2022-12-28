@@ -11,22 +11,19 @@ use anyhow::{anyhow, bail, Context};
 use cidr::IpCidr;
 use educe::Educe;
 use futures_util::sink::SinkExt;
-use lru::LruCache;
 use parking_lot::Mutex;
-use rand::prelude::*;
 use secp256k1::SecretKey;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
     fmt::Debug,
     future::Future,
     net::SocketAddr,
-    num::NonZeroUsize,
     ops::Deref,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Weak,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 use task_group::TaskGroup;
 use tokio::{
@@ -34,7 +31,6 @@ use tokio::{
     sync::{
         mpsc::{channel, unbounded_channel},
         oneshot::{channel as oneshot, Sender as OneshotSender},
-        Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore,
     },
     time::sleep,
 };
@@ -49,14 +45,13 @@ const PING_INTERVAL: Duration = Duration::from_secs(60);
 const DISCOVERY_TIMEOUT_SECS: u64 = 90;
 const DISCOVERY_CONNECT_TIMEOUT_SECS: u64 = 5;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 enum DisconnectInitiator {
     Local,
     LocalForceful,
     Remote,
 }
 
-#[derive(Debug)]
 struct DisconnectSignal {
     initiator: DisconnectInitiator,
     reason: DisconnectReason,
@@ -68,39 +63,27 @@ struct ConnectedPeerState {
 }
 
 #[derive(Debug)]
-enum PeerConnectionState {
+enum PeerState {
     Connecting { connection_id: Uuid },
     Connected(ConnectedPeerState),
 }
 
-impl PeerConnectionState {
+impl PeerState {
     const fn is_connected(&self) -> bool {
         matches!(self, Self::Connected(_))
     }
 }
 
-#[derive(Debug)]
-struct PeerState {
-    connection_state: PeerConnectionState,
-    sem_permit: OwnedSemaphorePermit,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct PeerStreams {
     /// Mapping of remote IDs to streams in `StreamMap`
     mapping: HashMap<PeerId, PeerState>,
-    semaphore: Arc<Semaphore>,
 }
 
 impl PeerStreams {
-    fn new(max_peers: usize) -> Self {
-        Self {
-            mapping: Default::default(),
-            semaphore: Arc::new(Semaphore::new(max_peers)),
-        }
-    }
-
     fn disconnect_peer(&mut self, remote_id: PeerId) -> bool {
+        debug!("disconnecting peer {}", remote_id);
+
         self.mapping.remove(&remote_id).is_some()
     }
 }
@@ -307,7 +290,6 @@ where
                 }
 
                 if let Some(DisconnectSignal { initiator, reason }) = disconnecting {
-                    debug!("Disconnecting, initiated by {initiator:?} for reason {reason:?}");
                     if let DisconnectInitiator::Local = initiator {
                         // We have sent disconnect message, wait for grace period.
                         sleep(Duration::from_secs(GRACE_PERIOD_SECS)).await;
@@ -407,14 +389,14 @@ async fn handle_incoming_request<C, Io>(
             let s = streams.clone();
             let mut s = s.lock();
             let node_filter = node_filter.clone();
-            let PeerStreams { mapping, semaphore } = &mut *s;
+            let PeerStreams { mapping } = &mut *s;
             let total_connections = mapping.len();
 
             match mapping.entry(remote_id) {
                 Entry::Occupied(entry) => {
                     debug!(
                         "We are already {} to remote peer {}!",
-                        if entry.get().connection_state.is_connected() {
+                        if entry.get().is_connected() {
                             "connected"
                         } else {
                             "connecting"
@@ -423,21 +405,16 @@ async fn handle_incoming_request<C, Io>(
                     );
                 }
                 Entry::Vacant(entry) => {
-                    if let Ok(sem_permit) = semaphore.clone().try_acquire_owned() {
-                        if node_filter.lock().is_allowed(total_connections, remote_id) {
-                            debug!("New incoming peer connected: {}", remote_id);
-                            entry.insert(PeerState {
-                                connection_state: PeerConnectionState::Connected(setup_peer_state(
-                                    Arc::downgrade(&streams),
-                                    capability_server,
-                                    remote_id,
-                                    peer,
-                                )),
-                                sem_permit,
-                            });
-                        } else {
-                            trace!("Node filter rejected peer {}, disconnecting", remote_id);
-                        }
+                    if node_filter.lock().is_allowed(total_connections, remote_id) {
+                        debug!("New incoming peer connected: {}", remote_id);
+                        entry.insert(PeerState::Connected(setup_peer_state(
+                            Arc::downgrade(&streams),
+                            capability_server,
+                            remote_id,
+                            peer,
+                        )));
+                    } else {
+                        trace!("Node filter rejected peer {}, disconnecting", remote_id);
                     }
                 }
             }
@@ -554,29 +531,11 @@ impl SwarmBuilder {
 #[educe(Debug)]
 pub struct ListenOptions {
     #[educe(Debug(ignore))]
-    discovery_tasks: Arc<AsyncMutex<StreamMap<String, Discovery>>>,
-    max_peers: NonZeroUsize,
-    addr: SocketAddr,
-    cidr: Option<IpCidr>,
-    no_new_peers: Arc<AtomicBool>,
-}
-
-impl ListenOptions {
-    pub fn new(
-        discovery_tasks: StreamMap<String, Discovery>,
-        max_peers: NonZeroUsize,
-        addr: SocketAddr,
-        cidr: Option<IpCidr>,
-        no_new_peers: Arc<AtomicBool>,
-    ) -> Self {
-        Self {
-            discovery_tasks: Arc::new(AsyncMutex::new(discovery_tasks)),
-            max_peers,
-            addr,
-            cidr,
-            no_new_peers,
-        }
-    }
+    pub discovery_tasks: StreamMap<String, Discovery>,
+    pub max_peers: usize,
+    pub addr: SocketAddr,
+    pub cidr: Option<IpCidr>,
+    pub no_new_peers: Arc<AtomicBool>,
 }
 
 impl Swarm<()> {
@@ -614,12 +573,11 @@ impl<C: CapabilityServer> Swarm<C> {
             .as_ref()
             .map_or(0, |options| options.addr.port());
 
-        let max_peers = listen_options
-            .as_ref()
-            .map_or(usize::MAX, |options| options.max_peers.get());
-        let streams = Arc::new(Mutex::new(PeerStreams::new(max_peers)));
+        let streams = Arc::new(Mutex::new(PeerStreams::default()));
         let node_filter = Arc::new(Mutex::new(MemoryNodeFilter::new(Arc::new(
-            max_peers.into(),
+            listen_options
+                .as_ref()
+                .map_or(usize::MAX.into(), |options| options.max_peers.into()),
         ))));
 
         let capabilities = Arc::new(capabilities);
@@ -660,76 +618,49 @@ impl<C: CapabilityServer> Swarm<C> {
             port,
         });
 
-        if let Some(options) = listen_options {
+        if let Some(mut options) = listen_options {
             tasks.spawn_with_name("dialer", {
                 let server = Arc::downgrade(&server);
-                let tasks = tasks.clone();
                 async move {
-                    let banlist = Arc::new(Mutex::new(LruCache::new(10_000)));
+                    loop {
+                        if let Some(server) = server.upgrade() {
+                            let streams_len = server.streams.lock().mapping.len();
+                            let max_peers = server.node_filter.lock().max_peers();
 
-                    for worker in 0..options.max_peers.get() {
-                        tasks.spawn_with_name(format!("dialer #{worker}"), {
-                            let banlist = banlist.clone();
-                            let server = server.clone();
-                            let discovery_tasks = options.discovery_tasks.clone();
-                            let no_new_peers = options.no_new_peers.clone();
-                            async move {
-                                loop {
-                                    if !no_new_peers.load(Ordering::SeqCst) {
-                                        trace!("Waiting for next peer from discovery");
-                                        let next_peer = discovery_tasks.lock().await.next().await;
-                                        match next_peer {
-                                            None => break,
-                                            Some((disc_id, Err(e))) => {
-                                                warn!("Failed to get new peer: {e} ({disc_id})")
-                                            }
-                                            Some((disc_id, Ok(NodeRecord { id, addr }))) => {
-                                                let now = Instant::now();
-                                                if let Some(banned_timestamp) =
-                                                    banlist.lock().get_mut(&id).copied()
-                                                {
-                                                    let time_since_ban: Duration =
-                                                        now - banned_timestamp;
-                                                    if time_since_ban <= Duration::from_secs(120) {
-                                                        let secs_since_ban = time_since_ban.as_secs();
-                                                        debug!(
-                                                            "Skipping failed peer ({id}, failed {secs_since_ban}s ago)",
-                                                        );
-                                                        continue;
-                                                    }
-                                                }
-
-                                                if let Some(server) = server.upgrade() {
-                                                    debug!("Dialing peer {id:?}@{addr} ({disc_id})");
-                                                    if server
-                                                        .add_peer_inner(addr, id, true)
-                                                        .await
-                                                        .is_err()
-                                                    {
-                                                        banlist.lock().put(id, Instant::now());
-                                                    }
-                                                } else {
-                                                    break;
-                                                }
+                            if !options.no_new_peers.load(Ordering::SeqCst) && streams_len < max_peers {
+                                trace!("Discovering peers as our peer count is too low: {} < {}", streams_len, max_peers);
+                                match tokio::time::timeout(
+                                    Duration::from_secs(DISCOVERY_TIMEOUT_SECS),
+                                    options.discovery_tasks.next(),
+                                )
+                                .await {
+                                    Err(_) => {
+                                        debug!("Failed to get new peer: timed out");
+                                    }
+                                    Ok(None) => {
+                                        debug!("Discoveries ended, dialer quitting");
+                                        return;
+                                    }
+                                    Ok(Some((disc_id, Ok(NodeRecord { addr, id: remote_id })))) => {
+                                        debug!("Discovered peer: {:?} ({})", remote_id, disc_id);
+                                        tokio::select! {
+                                            _ = server.add_peer_inner(addr, remote_id, true) => {},
+                                            _ = sleep(Duration::from_secs(DISCOVERY_CONNECT_TIMEOUT_SECS)) => {
+                                                debug!("Timed out adding peer {}", remote_id);
                                             }
                                         }
-                                    } else {
-                                        let delay = thread_rng().gen_range(0..2000 * options.max_peers.get()) as u64;
-                                        debug!("Not accepting peers, delaying dial for {delay}ms");
-                                        sleep(Duration::from_millis(delay)).await;
                                     }
+                                    Ok(Some((disc_id, Err(e)))) => warn!("Failed to get new peer: {} ({})", e, disc_id)
                                 }
-
-                                debug!("Quitting");
+                            } else {
+                                trace!("Skipping discovery as current number of peers is too high: {} >= {}", streams_len, max_peers);
+                                sleep(Duration::from_secs(2)).await;
                             }
-                            .instrument(span!(
-                                Level::DEBUG,
-                                "dialer",
-                                worker
-                            ))
-                        });
+                        } else {
+                            return;
+                        }
                     }
-                }
+                }.instrument(span!(Level::DEBUG, "dialer"))
             });
         }
 
@@ -775,10 +706,8 @@ impl<C: CapabilityServer> Swarm<C> {
                     let mut s = streams.lock();
                     if let Entry::Occupied(entry) = s.mapping.entry(remote_id) {
                         // If this is the same connection attempt, then remove.
-                        if let PeerConnectionState::Connecting { connection_id } =
-                            entry.get().connection_state
-                        {
-                            if connection_id == cid {
+                        if let PeerState::Connecting { connection_id } = entry.get() {
+                            if *connection_id == cid {
                                 trace!("Reaping failed outbound connection: {}/{}", remote_id, cid);
 
                                 entry.remove();
@@ -786,24 +715,17 @@ impl<C: CapabilityServer> Swarm<C> {
                         }
                     }
                 }
-                currently_connecting.fetch_sub(1, Ordering::SeqCst);
+                currently_connecting.fetch_sub(1, Ordering::Relaxed);
             }
         });
 
         async move {
+            trace!("Received request to add peer {}", remote_id);
             let mut inserted = false;
 
+            currently_connecting.fetch_add(1, Ordering::Relaxed);
+
             {
-                let semaphore = streams.lock().semaphore.clone();
-                trace!("Awaiting semaphore permit");
-                let sem_permit = match semaphore.acquire_owned().await {
-                    Ok(v) => v,
-                    Err(_) => return Ok(false),
-                };
-                trace!("Semaphore permit acquired");
-
-                currently_connecting.fetch_add(1, Ordering::SeqCst);
-
                 let mut streams = streams.lock();
                 let node_filter = node_filter.lock();
 
@@ -813,7 +735,7 @@ impl<C: CapabilityServer> Swarm<C> {
                     Entry::Occupied(key) => {
                         debug!(
                             "We are already {} to remote peer {}!",
-                            if key.get().connection_state.is_connected() {
+                            if key.get().is_connected() {
                                 "connected"
                             } else {
                                 "connecting"
@@ -827,10 +749,7 @@ impl<C: CapabilityServer> Swarm<C> {
                         } else {
                             debug!("connecting to peer {} at {}", remote_id, addr);
 
-                            vacant.insert(PeerState {
-                                connection_state: PeerConnectionState::Connecting { connection_id },
-                                sem_permit,
-                            });
+                            vacant.insert(PeerState::Connecting { connection_id });
                             inserted = true;
                         }
                     }
@@ -858,29 +777,28 @@ impl<C: CapabilityServer> Swarm<C> {
 
             let streams = streams.clone();
             let mut streams_guard = streams.lock();
-            let PeerStreams { mapping, .. } = &mut *streams_guard;
+            let PeerStreams { mapping } = &mut *streams_guard;
 
             // Adopt the new connection if the peer has not been dropped or superseded by incoming connection.
             if let Entry::Occupied(mut peer_state) = mapping.entry(remote_id) {
-                if !peer_state.get().connection_state.is_connected() {
+                if !peer_state.get().is_connected() {
                     match peer_res {
                         Ok(peer) => {
                             assert_eq!(peer.remote_id(), remote_id);
                             debug!("New peer connected: {}", remote_id);
 
-                            peer_state.get_mut().connection_state =
-                                PeerConnectionState::Connected(setup_peer_state(
-                                    Arc::downgrade(&streams),
-                                    capability_server,
-                                    remote_id,
-                                    peer,
-                                ));
+                            *peer_state.get_mut() = PeerState::Connected(setup_peer_state(
+                                Arc::downgrade(&streams),
+                                capability_server,
+                                remote_id,
+                                peer,
+                            ));
 
                             let _ = tx.send(());
                             return Ok(true);
                         }
                         Err(e) => {
-                            debug!("Peer {:?} disconnected with error: {}", remote_id, e);
+                            debug!("peer disconnected with error {}", e);
                             peer_state.remove();
                             return Err(e);
                         }
@@ -890,17 +808,12 @@ impl<C: CapabilityServer> Swarm<C> {
 
             Ok(false)
         }
-        .instrument(span!(
-            Level::DEBUG,
-            "add peer",
-            "remote_id={}",
-            &*remote_id.to_string()
-        ))
+        .instrument(span!(Level::DEBUG, "add peer",))
     }
 
     /// Returns the number of peers we're currently dialing
     pub fn dialing(&self) -> usize {
-        self.currently_connecting.load(Ordering::SeqCst)
+        self.currently_connecting.load(Ordering::Relaxed)
     }
 }
 

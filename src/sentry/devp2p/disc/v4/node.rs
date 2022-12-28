@@ -465,7 +465,7 @@ impl Node {
                                             let ping_data_result = Rlp::new(data).as_val::<PingMessage>();
                                             let ping_data = match ping_data_result {
                                                 Err(rlp::DecoderError::Custom("from:empty")) => {
-                                                    trace!("PING (ignore) due to an empty 'from' IP");
+                                                    warn!("PING (ignore) due to an empty 'from' IP");
                                                     return Ok(())
                                                 },
                                                 other => other.context("RLP decoding of incoming Ping message data")?,
@@ -516,7 +516,7 @@ impl Node {
                                                     let _ = cb.send(());
                                                 }
                                             } else {
-                                                trace!("PONG (unsolicited, ignoring)")
+                                                warn!("PONG (ignore)")
                                             }
                                         }
                                         Some(MessageId::FindNode) => {
@@ -535,7 +535,7 @@ impl Node {
                                                         .neighbours(message.id)
                                                         .map(Box::new);
                                                 } else {
-                                                    trace!("FINDNODE (unproofed, ignoring)");
+                                                    warn!("FINDNODE (ignore)");
                                                 }
                                             }
 
@@ -596,7 +596,7 @@ impl Node {
                             .instrument(span!(Level::TRACE, "IN", "addr={}", &*addr.to_string()))
                             .await
                             {
-                                trace!("Failed to handle message from {}: {}", addr, e);
+                                warn!("Failed to handle message from {}: {}", addr, e);
                             }
                         }
                     }
@@ -735,8 +735,6 @@ impl Node {
                 break;
             }
 
-            debug!("Picked alpha ({ALPHA}) closest nodes that are not queried");
-
             let fut = picked_nodes.into_iter().map(|(distance, node)| {
                 // ...send find node request...
                 node.queried = true;
@@ -861,7 +859,6 @@ impl Node {
                         if let btree_map::Entry::Vacant(vacant) =
                             nearest_nodes.entry(distance(target, record.id))
                         {
-                            debug!("Adding unseen node to query: {:?}", record);
                             // ...add to the set and continue the query
                             vacant.insert(QueryNode {
                                 record,

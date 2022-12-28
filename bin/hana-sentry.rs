@@ -10,8 +10,7 @@ use ethereum_interfaces::sentry::sentry_server::SentryServer;
 use maplit::btreemap;
 use secp256k1::{PublicKey, SecretKey, SECP256K1};
 use std::{
-    collections::HashMap, fmt::Debug, num::NonZeroUsize, path::PathBuf, str::FromStr, sync::Arc,
-    time::Duration,
+    collections::HashMap, fmt::Debug, path::PathBuf, str::FromStr, sync::Arc, time::Duration,
 };
 use task_group::TaskGroup;
 use tokio::time::sleep;
@@ -54,7 +53,7 @@ pub struct Opts {
     pub discv4_port: u16,
     #[clap(long)]
     pub discv4_bootnodes: Vec<Discv4NR>,
-    #[clap(long, default_value = "1000")]
+    #[clap(long, default_value = "20")]
     pub discv4_cache: usize,
     #[clap(long, default_value = "1")]
     pub discv4_concurrent_lookups: usize,
@@ -63,7 +62,7 @@ pub struct Opts {
     #[clap(long, default_value = "5000")]
     pub static_peers_interval: u64,
     #[clap(long, default_value = "50")]
-    pub max_peers: NonZeroUsize,
+    pub max_peers: usize,
     /// Disable DNS and UDP discovery, only use static peers.
     #[clap(long, takes_value = false)]
     pub no_discovery: bool,
@@ -262,13 +261,13 @@ async fn main() -> anyhow::Result<()> {
 
     let swarm = Swarm::builder()
         .with_task_group(tasks.clone())
-        .with_listen_options(ListenOptions::new(
+        .with_listen_options(ListenOptions {
             discovery_tasks,
-             opts.max_peers,
-             listen_addr.parse().unwrap(),
-            opts.cidr,
+            max_peers: opts.max_peers,
+            addr: listen_addr.parse().unwrap(),
+            cidr: opts.cidr,
             no_new_peers,
-        ))
+        })
         .with_client_version(format!("sentry/v{}", env!("CARGO_PKG_VERSION")))
         .build(
             btreemap! {
