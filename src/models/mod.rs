@@ -14,8 +14,8 @@ pub use self::{
 };
 
 use derive_more::*;
-use fastrlp::*;
 use hex_literal::hex;
+use rlp::{Decodable, Encodable};
 use serde::{Deserialize, Serialize};
 use std::{iter::Step, mem::size_of, ops::Add};
 
@@ -45,9 +45,6 @@ macro_rules! u64_wrapper {
             Hash,
             Serialize,
             Deserialize,
-            RlpEncodableWrapper,
-            RlpDecodableWrapper,
-            RlpMaxEncodedLen,
         )]
         #[serde(transparent)]
         #[repr(transparent)]
@@ -77,6 +74,18 @@ macro_rules! u64_wrapper {
 
             fn decode_from(v: Self::As) -> Result<Self, ::parity_scale_codec::Error> {
                 Ok(Self(v))
+            }
+        }
+
+        impl Encodable for $ty {
+            fn rlp_append(&self, s: &mut rlp::RlpStream) {
+                self.0.rlp_append(s)
+            }
+        }
+
+        impl Decodable for $ty {
+            fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
+                <u64 as Decodable>::decode(rlp).map(Self)
             }
         }
 

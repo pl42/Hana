@@ -2,8 +2,7 @@ use crate::{
     crypto::keccak256,
     models::{BlockHeader as BaseBlockHeader, *},
 };
-use bytes::{Bytes, BytesMut};
-use fastrlp::Encodable;
+use bytes::Bytes;
 
 #[derive(Clone, Debug)]
 pub struct BlockHeader {
@@ -38,9 +37,7 @@ impl BlockHeader {
     }
 
     fn rlp_repr_compute(&self) -> Bytes {
-        let mut out = BytesMut::new();
-        self.header.encode(&mut out);
-        out.freeze()
+        rlp::encode(&self.header).freeze()
     }
 
     pub fn rlp_repr_prepare(&mut self) {

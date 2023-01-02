@@ -1,5 +1,5 @@
 use crate::{crypto::*, models::*, util::*, State};
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use std::{collections::HashMap, convert::TryInto};
 
 // address -> initial value
@@ -58,8 +58,7 @@ impl InMemoryState {
                     let value = u256_to_h256(value);
                     let zv = zeroless_view(&value);
                     let encoded_location = keccak256(u256_to_h256(location));
-                    let mut encoded_value = BytesMut::new();
-                    fastrlp::Encodable::encode(&zv, &mut encoded_value);
+                    let encoded_value = rlp::encode(&zv);
                     (encoded_location, encoded_value)
                 }));
             }
@@ -88,7 +87,7 @@ impl InMemoryState {
         trie_root(self.accounts.iter().map(|(&address, account)| {
             let storage_root = self.account_storage_root(address);
             let account = account.to_rlp(storage_root);
-            (keccak256(address), fastrlp::encode_fixed_size(&account))
+            (keccak256(address), rlp::encode(&account))
         }))
     }
 

@@ -18,12 +18,6 @@ pub struct UnwindInput {
     pub unwind_to: BlockNumber,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct PruningInput {
-    pub prune_progress: Option<BlockNumber>,
-    pub prune_to: BlockNumber,
-}
-
 #[derive(Debug, PartialEq)]
 pub enum ExecOutput {
     Unwind {
@@ -64,15 +58,4 @@ where
     ) -> anyhow::Result<UnwindOutput>
     where
         'db: 'tx;
-
-    async fn prune<'tx>(
-        &mut self,
-        _tx: &'tx mut MdbxTransaction<'db, RW, E>,
-        _input: PruningInput,
-    ) -> anyhow::Result<()>
-    where
-        'db: 'tx,
-    {
-        Ok(())
-    }
 }

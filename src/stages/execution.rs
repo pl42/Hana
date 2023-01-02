@@ -12,7 +12,7 @@ use crate::{
         tables::{self, CallTraceSetEntry},
     },
     models::*,
-    stagedsync::{format_duration, stage::*, stages::EXECUTION, util::*},
+    stagedsync::{format_duration, stage::*, stages::EXECUTION},
     upsert_storage_value, Buffer,
 };
 use anyhow::{format_err, Context};
@@ -28,6 +28,7 @@ pub struct Execution {
     pub exit_after_batch: bool,
     pub batch_until: Option<BlockNumber>,
     pub commit_every: Option<Duration>,
+    pub prune_from: BlockNumber,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -41,8 +42,9 @@ fn execute_batch_of_blocks<E: EnvironmentKind>(
     commit_every: Option<Duration>,
     starting_block: BlockNumber,
     first_started_at: (Instant, Option<BlockNumber>),
+    prune_from: BlockNumber,
 ) -> anyhow::Result<BlockNumber> {
-    let mut buffer = Buffer::new(tx, None);
+    let mut buffer = Buffer::new(tx, prune_from, None);
     let mut consensus_engine = engine_factory(chain_config.clone())?;
     let mut analysis_cache = AnalysisCache::default();
 
@@ -215,6 +217,7 @@ where
                 self.commit_every,
                 starting_block,
                 input.first_started_at,
+                self.prune_from,
             )?;
 
             let done = executed_to == max_block || self.exit_after_batch;
@@ -283,34 +286,27 @@ where
         }
 
         info!("Unwinding logs");
-        unwind_by_block_key(tx, tables::Log, input, |(block_number, _)| block_number)?;
+        let mut log_cursor = tx.cursor(tables::Log)?;
+        while let Some(((block_number, _), _)) = log_cursor.last()? {
+            if block_number <= input.unwind_to {
+                break;
+            }
+
+            log_cursor.delete_current()?;
+        }
 
         info!("Unwinding call trace sets");
-        unwind_by_block_key_duplicates(tx, tables::CallTraceSet, input, std::convert::identity)?;
+        let mut call_trace_set_cursor = tx.cursor(tables::CallTraceSet)?;
+        while let Some((block_number, _)) = call_trace_set_cursor.last()? {
+            if block_number <= input.unwind_to {
+                break;
+            }
+
+            call_trace_set_cursor.delete_current_duplicates()?;
+        }
 
         Ok(UnwindOutput {
             stage_progress: input.unwind_to,
         })
-    }
-
-    async fn prune<'tx>(
-        &mut self,
-        tx: &'tx mut MdbxTransaction<'db, RW, E>,
-        input: PruningInput,
-    ) -> anyhow::Result<()>
-    where
-        'db: 'tx,
-    {
-        prune_by_block_key(tx, tables::AccountChangeSet, input, std::convert::identity)?;
-        prune_by_block_key(
-            tx,
-            tables::StorageChangeSet,
-            input,
-            |tables::StorageChangeKey { block_number, .. }| block_number,
-        )?;
-        prune_by_block_key(tx, tables::Log, input, |(block_number, _)| block_number)?;
-        prune_by_block_key_duplicates(tx, tables::CallTraceSet, input, std::convert::identity)?;
-
-        Ok(())
     }
 }

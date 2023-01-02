@@ -2,11 +2,11 @@ use crate::sentry::devp2p::{peer::DisconnectReason, util::*};
 use arrayvec::ArrayString;
 use async_trait::async_trait;
 use auto_impl::auto_impl;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use derive_more::Display;
 use educe::Educe;
 pub use ethereum_types::H512 as PeerId;
-use fastrlp::*;
+use rlp::{DecoderError, Rlp, RlpStream};
 use std::{collections::HashMap, fmt::Debug, future::pending, net::SocketAddr, str::FromStr};
 
 /// Record that specifies information necessary to connect to RLPx node
@@ -40,23 +40,20 @@ impl FromStr for NodeRecord {
 #[derive(Clone, Copy, Debug, Display, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CapabilityName(pub ArrayString<4>);
 
-impl Encodable for CapabilityName {
-    fn encode(&self, out: &mut dyn BufMut) {
-        self.0.as_bytes().encode(out)
-    }
-    fn length(&self) -> usize {
-        self.0.as_bytes().length()
+impl rlp::Encodable for CapabilityName {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        self.0.as_bytes().rlp_append(s);
     }
 }
 
-impl Decodable for CapabilityName {
-    fn decode(buf: &mut &[u8]) -> Result<Self, DecodeError> {
+impl rlp::Decodable for CapabilityName {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
         Ok(Self(
             ArrayString::from(
-                std::str::from_utf8(&BytesMut::decode(buf)?)
-                    .map_err(|_| DecodeError::Custom("should be a UTF-8 string"))?,
+                std::str::from_utf8(rlp.data()?)
+                    .map_err(|_| DecoderError::Custom("should be a UTF-8 string"))?,
             )
-            .map_err(|_| DecodeError::Custom("capability name is too long"))?,
+            .map_err(|_| DecoderError::RlpIsTooBig)?,
         ))
     }
 }

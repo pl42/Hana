@@ -1,5 +1,5 @@
-use crate::models::*;
-use fastrlp::*;
+use crate::models::BlockNumber;
+use ethereum_types::H256;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum BlockId {
@@ -7,30 +7,21 @@ pub enum BlockId {
     Number(BlockNumber),
 }
 
-impl Decodable for BlockId {
-    fn decode(buf: &mut &[u8]) -> Result<Self, DecodeError> {
-        let header = Header::decode(&mut &**buf)?;
-
-        if header.payload_length == 32 {
-            H256::decode(buf).map(Self::Hash)
+impl rlp::Decodable for BlockId {
+    fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
+        if rlp.size() == 32 {
+            Ok(Self::Hash(rlp.as_val()?))
         } else {
-            BlockNumber::decode(buf).map(Self::Number)
+            Ok(Self::Number(rlp.as_val()?))
         }
     }
 }
 
-impl Encodable for BlockId {
-    fn encode(&self, out: &mut dyn BufMut) {
+impl rlp::Encodable for BlockId {
+    fn rlp_append(&self, s: &mut rlp::RlpStream) {
         match self {
-            Self::Hash(hash) => hash.encode(out),
-            Self::Number(number) => number.encode(out),
-        }
-    }
-
-    fn length(&self) -> usize {
-        match self {
-            BlockId::Hash(hash) => hash.length(),
-            BlockId::Number(num) => num.length(),
+            Self::Hash(v) => rlp::Encodable::rlp_append(v, s),
+            Self::Number(v) => rlp::Encodable::rlp_append(v, s),
         }
     }
 }
