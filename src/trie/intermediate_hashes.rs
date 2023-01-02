@@ -342,7 +342,7 @@ where
 
                 self.hb.add_leaf(
                     unpacked_key,
-                    rlp::encode(&account.to_rlp(storage_root)).as_ref(),
+                    &fastrlp::encode_fixed_size(&account.to_rlp(storage_root)),
                 );
 
                 acc = state.next()?
@@ -358,6 +358,7 @@ where
         changed: &mut PrefixSet,
     ) -> Result<H256> {
         let mut state = self.txn.cursor(tables::HashedStorage)?;
+
         let mut trie_db_cursor = self.txn.cursor(tables::TrieStorage)?;
 
         let mut hb = HashBuilder::new(Some(Box::new(
@@ -370,6 +371,9 @@ where
         let mut trie = Cursor::new(&mut trie_db_cursor, changed, key_with_inc)?;
         while let Some(key) = trie.key() {
             if trie.can_skip_state {
+                if state.seek_exact(H256::from_slice(key_with_inc))?.is_none() {
+                    return Ok(EMPTY_ROOT);
+                }
                 hb.add_branch_node(
                     key,
                     trie.hash().as_ref().unwrap(),
@@ -398,7 +402,7 @@ where
                         break;
                     }
                 }
-                hb.add_leaf(unpacked_loc, rlp::encode(&value).as_ref());
+                hb.add_leaf(unpacked_loc, fastrlp::encode_fixed_size(&value).as_ref());
                 storage = state.next_dup()?.map(|(_, v)| v);
             }
         }
@@ -827,7 +831,10 @@ mod tests {
 
             upsert_hashed_storage_value(&mut hashed_storage, storage_key, loc, val).unwrap();
 
-            hb.add_leaf(unpack_nibbles(loc.as_bytes()), &rlp::encode(&val));
+            hb.add_leaf(
+                unpack_nibbles(loc.as_bytes()),
+                &fastrlp::encode_fixed_size(&val),
+            );
         }
 
         hb.compute_root_hash()
@@ -867,7 +874,7 @@ mod tests {
         hashed_accounts.upsert(key1, a1).unwrap();
         hb.add_leaf(
             unpack_nibbles(&key1[..]),
-            &rlp::encode(&a1.to_rlp(EMPTY_ROOT)),
+            &fastrlp::encode_fixed_size(&a1.to_rlp(EMPTY_ROOT)),
         );
 
         // Some address whose hash starts with 0xB040
@@ -883,7 +890,7 @@ mod tests {
         hashed_accounts.upsert(key2, a2).unwrap();
         hb.add_leaf(
             unpack_nibbles(&key2[..]),
-            &rlp::encode(&a2.to_rlp(EMPTY_ROOT)),
+            &fastrlp::encode_fixed_size(&a2.to_rlp(EMPTY_ROOT)),
         );
 
         // Some address whose hash starts with 0xB041
@@ -903,7 +910,7 @@ mod tests {
 
         hb.add_leaf(
             unpack_nibbles(&key3[..]),
-            &rlp::encode(&a3.to_rlp(storage_root)),
+            &fastrlp::encode_fixed_size(&a3.to_rlp(storage_root)),
         );
 
         let key4a = hex!("B1A0000000000000000000000000000000000000000000000000000000000000").into();
@@ -915,7 +922,7 @@ mod tests {
         hashed_accounts.upsert(key4a, a4a).unwrap();
         hb.add_leaf(
             unpack_nibbles(&key4a[..]),
-            &rlp::encode(&a4a.to_rlp(EMPTY_ROOT)),
+            &fastrlp::encode_fixed_size(&a4a.to_rlp(EMPTY_ROOT)),
         );
 
         let key5 = hex!("B310000000000000000000000000000000000000000000000000000000000000").into();
@@ -927,7 +934,7 @@ mod tests {
         hashed_accounts.upsert(key5, a5).unwrap();
         hb.add_leaf(
             unpack_nibbles(&key5[..]),
-            &rlp::encode(&a5.to_rlp(EMPTY_ROOT)),
+            &fastrlp::encode_fixed_size(&a5.to_rlp(EMPTY_ROOT)),
         );
 
         let key6 = hex!("B340000000000000000000000000000000000000000000000000000000000000").into();
@@ -939,7 +946,7 @@ mod tests {
         hashed_accounts.upsert(key6, a6).unwrap();
         hb.add_leaf(
             unpack_nibbles(&key6[..]),
-            &rlp::encode(&a6.to_rlp(EMPTY_ROOT)),
+            &fastrlp::encode_fixed_size(&a6.to_rlp(EMPTY_ROOT)),
         );
 
         // ----------------------------------------------------------------
@@ -1138,7 +1145,7 @@ mod tests {
             hashed_accounts.upsert(H256(key), a).unwrap();
             hb.add_leaf(
                 unpack_nibbles(&key[..]),
-                &rlp::encode(&a.to_rlp(EMPTY_ROOT)),
+                &fastrlp::encode_fixed_size(&a.to_rlp(EMPTY_ROOT)),
             );
         }
 
@@ -1700,6 +1707,8 @@ mod property_test {
         u256_to_h256, zeroless_view,
     };
     use anyhow::Result;
+    use bytes::BytesMut;
+    use fastrlp::Encodable;
     use proptest::prelude::*;
     use std::collections::BTreeMap;
     use tempfile::TempDir;
@@ -1797,10 +1806,9 @@ mod property_test {
             EMPTY_ROOT
         } else {
             trie_root(storage.iter().map(|(k, v)| {
-                (
-                    keccak256(k.to_fixed_bytes()),
-                    rlp::encode(&zeroless_view(&u256_to_h256(*v))),
-                )
+                let mut b = BytesMut::new();
+                Encodable::encode(&zeroless_view(&u256_to_h256(*v)), &mut b);
+                (keccak256(k.to_fixed_bytes()), b)
             }))
         }
     }
@@ -1811,7 +1819,7 @@ mod property_test {
                 .iter()
                 .map(|(&address, (account, storage))| {
                     let account_rlp = account.to_rlp(expected_storage_root(storage));
-                    (keccak256(address), rlp::encode(&account_rlp))
+                    (keccak256(address), fastrlp::encode_fixed_size(&account_rlp))
                 }),
         )
     }
