@@ -1,4 +1,4 @@
-use super::{analysis_cache::AnalysisCache, root_hash, tracer::Tracer};
+use super::{analysis_cache::AnalysisCache, tracer::Tracer};
 use crate::{
     chain::{
         intrinsic_gas::*,
@@ -9,6 +9,7 @@ use crate::{
     h256_to_u256,
     models::*,
     state::IntraBlockState,
+    trie::root_hash,
     State,
 };
 use anyhow::Context;
@@ -74,7 +75,6 @@ where
             self.header.base_fee_per_gas,
         )
         .expect("Tx must have been prevalidated");
-
         if self.state.get_code_hash(tx.sender)? != EMPTY_HASH {
             return Err(ValidationError::SenderNoEOA { sender: tx.sender }.into());
         }

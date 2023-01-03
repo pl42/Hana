@@ -7,6 +7,7 @@ use hana::{
         traits::*,
     },
     models::*,
+    rpc::eth::EthApiServerImpl,
     sentry_connector::{
         sentry_client_connector::SentryClientConnectorImpl,
         sentry_client_reactor::SentryClientReactor,
@@ -18,8 +19,13 @@ use hana::{
 use anyhow::{bail, format_err, Context};
 use async_trait::async_trait;
 use clap::Parser;
+use ethereum_jsonrpc::EthApiServer;
+use fastrlp::*;
+use jsonrpsee::http_server::HttpServerBuilder;
 use rayon::prelude::*;
 use std::{
+    future::pending,
+    net::SocketAddr,
     panic,
     path::PathBuf,
     sync::Arc,
@@ -99,6 +105,10 @@ pub struct Opt {
     /// Delay applied at the terminating stage.
     #[clap(long, default_value = "2000")]
     pub delay_after_sync: u64,
+
+    /// Enable JSONRPC at this address
+    #[clap(long)]
+    pub rpc_listen_address: Option<SocketAddr>,
 }
 
 #[derive(Debug)]
@@ -174,8 +184,8 @@ where
             canonical_cur.append(block_number, canonical_hash)?;
             header_cur.append(
                 (block_number, canonical_hash),
-                rlp::decode(
-                    &erigon_header_cur
+                <BlockHeader as Decodable>::decode(
+                    &mut &*erigon_header_cur
                         .seek_exact(TableEncode::encode((block_number, canonical_hash)).to_vec())?
                         .unwrap()
                         .1,
@@ -334,7 +344,7 @@ where
                             continue;
                         }
 
-                        let body = rlp::decode::<BodyForStorage>(&v)?;
+                        let body = <BodyForStorage as Decodable>::decode(&mut &*v)?;
 
                         let base_tx_id = body.base_tx_id;
 
@@ -390,9 +400,11 @@ where
                         body.uncles,
                         txs.into_iter()
                             .map(|v| {
-                                Ok(rlp::decode::<hana::models::MessageWithSignature>(&v)?
-                                    .encode()
-                                    .to_vec())
+                                Ok(<hana::models::MessageWithSignature as Decodable>::decode(
+                                    &mut &*v,
+                                )?
+                                .encode()
+                                .to_vec())
                             })
                             .collect::<anyhow::Result<Vec<_>>>()?,
                     ))
@@ -639,7 +651,7 @@ fn main() -> anyhow::Result<()> {
                     tempfile::tempdir_in(&etl_temp_path)
                         .context("failed to create ETL temp dir")?,
                 );
-                let db = hana::kv::new_database(&hana_chain_data_dir)?;
+                let db = Arc::new(hana::kv::new_database(&hana_chain_data_dir)?);
                 {
                     let span = span!(Level::INFO, "", " Genesis initialization ");
                     let _g = span.enter();
@@ -651,6 +663,24 @@ fn main() -> anyhow::Result<()> {
                     )? {
                         txn.commit()?;
                     }
+                }
+
+                if let Some(listen_address) = opt.rpc_listen_address {
+                    let db = db.clone();
+                    tokio::spawn(async move {
+                        let server = HttpServerBuilder::default().build(listen_address).unwrap();
+                        let _server_handle = server
+                            .start(
+                                EthApiServerImpl {
+                                    db,
+                                    call_gas_limit: 100_000_000,
+                                }
+                                .into_rpc(),
+                            )
+                            .unwrap();
+
+                        pending::<()>().await
+                    });
                 }
 
                 let sentry_status_provider = SentryStatusProvider::new(chain_config.clone());
@@ -724,6 +754,9 @@ fn main() -> anyhow::Result<()> {
                     staged_sync.push(HashState::new(etl_temp_dir.clone(), None));
                     staged_sync.push(Interhashes::new(etl_temp_dir.clone(), None));
                 }
+                staged_sync.push(TxLookup {
+                    temp_dir: etl_temp_dir.clone(),
+                });
                 staged_sync.push(CallTraceIndex {
                     temp_dir: etl_temp_dir.clone(),
                     flush_interval: 50_000,
