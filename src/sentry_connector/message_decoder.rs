@@ -1,74 +1,69 @@
 use super::messages::*;
 use crate::sentry_connector::messages::Message;
-use fastrlp::*;
 
-pub fn decode_rlp_message(id: EthMessageId, mut message_bytes: &[u8]) -> anyhow::Result<Message> {
-    let message_bytes = &mut message_bytes;
+pub fn decode_rlp_message(id: EthMessageId, message_bytes: &[u8]) -> anyhow::Result<Message> {
     let message: Message = match id {
-        EthMessageId::Status => Message::Status(Decodable::decode(message_bytes)?),
-        EthMessageId::NewBlockHashes => Message::NewBlockHashes(Decodable::decode(message_bytes)?),
-        EthMessageId::Transactions => Message::Transactions(Decodable::decode(message_bytes)?),
+        EthMessageId::Status => Message::Status(rlp::decode::<StatusMessage>(message_bytes)?),
+        EthMessageId::NewBlockHashes => {
+            Message::NewBlockHashes(rlp::decode::<NewBlockHashesMessage>(message_bytes)?)
+        }
+        EthMessageId::Transactions => {
+            Message::Transactions(rlp::decode::<TransactionsMessage>(message_bytes)?)
+        }
         EthMessageId::GetBlockHeaders => {
-            Message::GetBlockHeaders(Decodable::decode(message_bytes)?)
+            Message::GetBlockHeaders(rlp::decode::<GetBlockHeadersMessage>(message_bytes)?)
         }
-        EthMessageId::BlockHeaders => Message::BlockHeaders(Decodable::decode(message_bytes)?),
-        EthMessageId::GetBlockBodies => Message::GetBlockBodies(Decodable::decode(message_bytes)?),
-        EthMessageId::BlockBodies => Message::BlockBodies(Decodable::decode(message_bytes)?),
-        EthMessageId::NewBlock => Message::NewBlock(Decodable::decode(message_bytes)?),
-        EthMessageId::NewPooledTransactionHashes => {
-            Message::NewPooledTransactionHashes(Decodable::decode(message_bytes)?)
+        EthMessageId::BlockHeaders => {
+            Message::BlockHeaders(rlp::decode::<BlockHeadersMessage>(message_bytes)?)
         }
+        EthMessageId::GetBlockBodies => {
+            Message::GetBlockBodies(rlp::decode::<GetBlockBodiesMessage>(message_bytes)?)
+        }
+        EthMessageId::BlockBodies => {
+            Message::BlockBodies(rlp::decode::<BlockBodiesMessage>(message_bytes)?)
+        }
+        EthMessageId::NewBlock => Message::NewBlock(rlp::decode::<NewBlockMessage>(message_bytes)?),
+        EthMessageId::NewPooledTransactionHashes => Message::NewPooledTransactionHashes(
+            rlp::decode::<NewPooledTransactionHashesMessage>(message_bytes)?,
+        ),
         EthMessageId::GetPooledTransactions => {
-            Message::GetPooledTransactions(Decodable::decode(message_bytes)?)
+            Message::GetPooledTransactions(rlp::decode::<GetPooledTransactionsMessage>(
+                message_bytes,
+            )?)
         }
         EthMessageId::PooledTransactions => {
-            Message::PooledTransactions(Decodable::decode(message_bytes)?)
+            Message::PooledTransactions(rlp::decode::<PooledTransactionsMessage>(message_bytes)?)
         }
-        EthMessageId::GetNodeData => Message::GetNodeData(Decodable::decode(message_bytes)?),
-        EthMessageId::NodeData => Message::NodeData(Decodable::decode(message_bytes)?),
-        EthMessageId::GetReceipts => Message::GetReceipts(Decodable::decode(message_bytes)?),
-        EthMessageId::Receipts => Message::Receipts(Decodable::decode(message_bytes)?),
+        EthMessageId::GetNodeData => {
+            Message::GetNodeData(rlp::decode::<GetNodeDataMessage>(message_bytes)?)
+        }
+        EthMessageId::NodeData => Message::NodeData(rlp::decode::<NodeDataMessage>(message_bytes)?),
+        EthMessageId::GetReceipts => {
+            Message::GetReceipts(rlp::decode::<GetReceiptsMessage>(message_bytes)?)
+        }
+        EthMessageId::Receipts => Message::Receipts(rlp::decode::<ReceiptsMessage>(message_bytes)?),
     };
     Ok(message)
 }
 
-impl Encodable for Message {
-    fn encode(&self, out: &mut dyn BufMut) {
+impl rlp::Encodable for Message {
+    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
         match self {
-            Message::Status(v) => v.encode(out),
-            Message::NewBlockHashes(v) => v.encode(out),
-            Message::Transactions(v) => v.encode(out),
-            Message::GetBlockHeaders(v) => v.encode(out),
-            Message::BlockHeaders(v) => v.encode(out),
-            Message::GetBlockBodies(v) => v.encode(out),
-            Message::BlockBodies(v) => v.encode(out),
-            Message::NewBlock(v) => v.encode(out),
-            Message::NewPooledTransactionHashes(v) => v.encode(out),
-            Message::GetPooledTransactions(v) => v.encode(out),
-            Message::PooledTransactions(v) => v.encode(out),
-            Message::GetNodeData(v) => v.encode(out),
-            Message::NodeData(v) => v.encode(out),
-            Message::GetReceipts(v) => v.encode(out),
-            Message::Receipts(v) => v.encode(out),
-        }
-    }
-    fn length(&self) -> usize {
-        match self {
-            Message::Status(v) => v.length(),
-            Message::NewBlockHashes(v) => v.length(),
-            Message::Transactions(v) => v.length(),
-            Message::GetBlockHeaders(v) => v.length(),
-            Message::BlockHeaders(v) => v.length(),
-            Message::GetBlockBodies(v) => v.length(),
-            Message::BlockBodies(v) => v.length(),
-            Message::NewBlock(v) => v.length(),
-            Message::NewPooledTransactionHashes(v) => v.length(),
-            Message::GetPooledTransactions(v) => v.length(),
-            Message::PooledTransactions(v) => v.length(),
-            Message::GetNodeData(v) => v.length(),
-            Message::NodeData(v) => v.length(),
-            Message::GetReceipts(v) => v.length(),
-            Message::Receipts(v) => v.length(),
+            Message::NewBlockHashes(message) => message.rlp_append(stream),
+            Message::GetBlockHeaders(message) => message.rlp_append(stream),
+            Message::BlockHeaders(message) => message.rlp_append(stream),
+            Message::NewBlock(message) => message.rlp_append(stream),
+            Message::NewPooledTransactionHashes(message) => message.rlp_append(stream),
+            Message::Transactions(message) => message.rlp_append(stream),
+            Message::GetBlockBodies(message) => message.rlp_append(stream),
+            Message::BlockBodies(message) => message.rlp_append(stream),
+            Message::GetPooledTransactions(message) => message.rlp_append(stream),
+            Message::PooledTransactions(message) => message.rlp_append(stream),
+            Message::GetNodeData(message) => message.rlp_append(stream),
+            Message::NodeData(message) => message.rlp_append(stream),
+            Message::GetReceipts(message) => message.rlp_append(stream),
+            Message::Receipts(message) => message.rlp_append(stream),
+            Message::Status(message) => message.rlp_append(stream),
         }
     }
 }
@@ -83,10 +78,10 @@ mod tests {
         },
         sentry_connector::messages::Message,
     };
-    use bytes::{Bytes, BytesMut};
+
+    use bytes::Bytes;
     use ethereum_types::{Bloom, H160, H256, H64};
     use ethnum::U256;
-    use fastrlp::*;
     use hex_literal::hex;
 
     #[test]
@@ -96,39 +91,39 @@ mod tests {
         let result = decode_rlp_message(EthMessageId::NewBlockHashes, &expected_bytes);
         let some_message = result.unwrap();
 
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         assert_eq!(
             some_message,
-            Message::NewBlockHashes(NewBlockHashesMessage(vec![BlockHashAndNumber {
-                hash: H256(hex!(
-                    "7100614faba6650b53fe0913ed7267bcc968eb362e3df908645a50aa526c72ba"
-                )),
-                number: BlockNumber(10567341),
-            },],))
+            Message::NewBlockHashes(NewBlockHashesMessage {
+                ids: vec![BlockHashAndNumber {
+                    hash: H256(hex!(
+                        "7100614faba6650b53fe0913ed7267bcc968eb362e3df908645a50aa526c72ba"
+                    )),
+                    number: BlockNumber(10567341),
+                },],
+            })
         );
     }
 
     #[test]
     fn decode_get_block_headers() {
         let expected_bytes = hex!("ca820457c682270f050580");
-        let some_message =
-            decode_rlp_message(EthMessageId::GetBlockHeaders, &expected_bytes).unwrap();
+        let result = decode_rlp_message(EthMessageId::GetBlockHeaders, &expected_bytes);
+        let some_message = result.unwrap();
 
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         assert_eq!(
             some_message,
             Message::GetBlockHeaders(GetBlockHeadersMessage {
-                request_id: 0x0457,
+                request_id: 1111,
                 params: GetBlockHeadersMessageParams {
-                    start_block: BlockId::Number(0x270f.into()),
-                    limit: 0x05,
-                    skip: 0x05,
+                    start_block: BlockId::Number(9999.into()),
+                    limit: 5,
+                    skip: 5,
                     reverse: 0,
                 },
             })
@@ -143,8 +138,7 @@ mod tests {
         let result = decode_rlp_message(EthMessageId::GetBlockHeaders, &expected_bytes);
         let some_message = result.unwrap();
 
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         assert_eq!(
@@ -170,8 +164,7 @@ mod tests {
             hex!("f847820457f842a000000000000000000000000000000000000000000000000000000000deadc0dea000000000000000000000000000000000000000000000000000000000feedbeef");
         let result = decode_rlp_message(EthMessageId::GetBlockBodies, &expected_bytes);
         let some_message = result.unwrap();
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         assert_eq!(
@@ -196,8 +189,7 @@ mod tests {
             hex!("f90202820457f901fcf901f9a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000940000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000b90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008208ae820d0582115c8215b3821a0a827788a00000000000000000000000000000000000000000000000000000000000000000880000000000000000");
         let result = decode_rlp_message(EthMessageId::BlockHeaders, &expected_bytes);
         let some_message = result.unwrap();
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         assert_eq!(
@@ -234,8 +226,7 @@ mod tests {
             hex!("f902dc820457f902d6f902d3f8d2f867088504a817c8088302e2489435353535353535353535353535353535353535358202008025a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c12a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c10f867098504a817c809830334509435353535353535353535353535353535353535358202d98025a052f8f61201b2b11a78d6e866abc9c3db2ae8631fa656bfe5cb53668255367afba052f8f61201b2b11a78d6e866abc9c3db2ae8631fa656bfe5cb53668255367afbf901fcf901f9a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000940000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000b90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008208ae820d0582115c8215b3821a0a827788a00000000000000000000000000000000000000000000000000000000000000000880000000000000000");
         let result = decode_rlp_message(EthMessageId::BlockBodies, &expected_bytes);
         let some_message = result.unwrap();
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         assert_eq!(
@@ -319,8 +310,7 @@ mod tests {
             hex!("f847820457f842a000000000000000000000000000000000000000000000000000000000deadc0dea000000000000000000000000000000000000000000000000000000000feedbeef");
         let result = decode_rlp_message(EthMessageId::GetNodeData, &expected_bytes);
         let some_message = result.unwrap();
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         assert_eq!(
@@ -345,8 +335,7 @@ mod tests {
         hex!("f847820457f842a000000000000000000000000000000000000000000000000000000000deadc0dea000000000000000000000000000000000000000000000000000000000feedbeef");
         let result = decode_rlp_message(EthMessageId::GetReceipts, &expected_bytes);
         let some_message = result.unwrap();
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         assert_eq!(
@@ -371,17 +360,16 @@ mod tests {
         hex!("f90172820457f9016cf90169f901668001b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f85ff85d940000000000000000000000000000000000000011f842a0000000000000000000000000000000000000000000000000000000000000deada0000000000000000000000000000000000000000000000000000000000000beef830100ff");
         let result = decode_rlp_message(EthMessageId::Receipts, &expected_bytes);
         let some_message = result.unwrap();
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         assert_eq!(
             some_message,
             Message::Receipts(ReceiptsMessage {
-                request_id: 0x0457,
+                request_id: 1111,
                 receipts: vec![{
-                    BlockReceipts (
-                        vec![Receipt {
+                    BlockReceipts {
+                        receipts: vec![Receipt {
                             logs: vec![crate::models::Log {
                                 address: H160(hex!("0000000000000000000000000000000000000011")),
                                 topics: vec![
@@ -395,11 +383,11 @@ mod tests {
                                 data: vec![0x01, 0x00, 0xff].into(),
                             }],
                             success: false,
-                            cumulative_gas_used: 0x01,
+                            cumulative_gas_used: 1,
                             bloom: Bloom(hex!("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")),
                             tx_type: crate::models::TxType::Legacy,
                         }],
-                    )
+                    }
                 }]
             })
         );
@@ -410,15 +398,18 @@ mod tests {
         let expected_bytes = hex!("ce820457ca84deadc0de84feedbeef");
         let result = decode_rlp_message(EthMessageId::NodeData, &expected_bytes);
         let some_message = result.unwrap();
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         let msg = Message::NodeData(NodeDataMessage {
-            request_id: 0x0457,
+            request_id: 1111,
             data: vec![
-                hex!("deadc0de").to_vec().into(),
-                hex!("feedbeef").to_vec().into(),
+                NodeDataType {
+                    blob: Vec::from(hex!("deadc0de")),
+                },
+                NodeDataType {
+                    blob: Vec::from(hex!("feedbeef")),
+                },
             ],
         });
 
@@ -430,8 +421,7 @@ mod tests {
         let expected_bytes = hex!("f847820457f842a000000000000000000000000000000000000000000000000000000000deadc0dea000000000000000000000000000000000000000000000000000000000feedbeef");
         let result = decode_rlp_message(EthMessageId::GetPooledTransactions, &expected_bytes);
         let some_message = result.unwrap();
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         let msg = Message::GetPooledTransactions(GetPooledTransactionsMessage {
@@ -454,8 +444,7 @@ mod tests {
         let expected_bytes = hex!("f8d7820457f8d2f867088504a817c8088302e2489435353535353535353535353535353535353535358202008025a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c12a064b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c10f867098504a817c809830334509435353535353535353535353535353535353535358202d98025a052f8f61201b2b11a78d6e866abc9c3db2ae8631fa656bfe5cb53668255367afba052f8f61201b2b11a78d6e866abc9c3db2ae8631fa656bfe5cb53668255367afb");
         let result = decode_rlp_message(EthMessageId::PooledTransactions, &expected_bytes);
         let some_message = result.unwrap();
-        let mut bytes = BytesMut::new();
-        some_message.encode(&mut bytes);
+        let bytes = rlp::encode(&some_message);
         assert_eq!(&*bytes, expected_bytes);
 
         let msg = Message::PooledTransactions(PooledTransactionsMessage {

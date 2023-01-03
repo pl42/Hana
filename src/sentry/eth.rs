@@ -1,17 +1,17 @@
 use super::devp2p::*;
-use crate::models::*;
 use anyhow::anyhow;
 use arrayvec::ArrayString;
 use enum_primitive_derive::*;
 use ethereum_forkid::{ForkFilter, ForkId};
-use fastrlp::*;
+use ethereum_types::*;
+use rlp_derive::*;
 use std::{collections::BTreeSet, convert::TryFrom};
 
 pub fn capability_name() -> CapabilityName {
     CapabilityName(ArrayString::from("eth").unwrap())
 }
 
-#[derive(Clone, Debug, RlpEncodable, RlpDecodable, RlpMaxEncodedLen)]
+#[derive(Clone, Debug, RlpEncodable, RlpDecodable)]
 pub struct StatusMessage {
     pub protocol_version: usize,
     pub network_id: u64,

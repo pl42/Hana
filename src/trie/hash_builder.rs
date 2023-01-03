@@ -6,9 +6,9 @@ use crate::{
         util::{assert_subset, prefix_length},
     },
 };
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::BytesMut;
 use ethereum_types::H256;
-use fastrlp::{Encodable, RlpEncodable, EMPTY_STRING_CODE};
+use rlp::RlpStream;
 use std::{boxed::Box, cmp};
 
 const RLP_EMPTY_STRING_CODE: u8 = 0x80;
@@ -59,38 +59,26 @@ enum HashBuilderValue {
 }
 
 fn leaf_node_rlp(path: &[u8], value: &[u8]) -> BytesMut {
-    let encoded_path = &encode_path(path, true);
+    let encoded_path = encode_path(path, true);
 
-    #[derive(RlpEncodable)]
-    struct S<'a> {
-        encoded_path: &'a [u8],
-        value: &'a [u8],
-    }
+    let mut stream = RlpStream::new_list(2);
+    stream.append(&encoded_path);
+    stream.append(&value);
 
-    let mut out = BytesMut::new();
-    S {
-        encoded_path,
-        value,
-    }
-    .encode(&mut out);
-    out
+    stream.out()
 }
 
 fn extension_node_rlp(path: &[u8], child_ref: &[u8]) -> BytesMut {
-    let encoded_path = Bytes::from(encode_path(path, false));
+    let encoded_path = encode_path(path, false);
 
-    let mut out = BytesMut::new();
-    let h = fastrlp::Header {
-        list: true,
-        payload_length: fastrlp::Encodable::length(&encoded_path) + child_ref.len(),
-    };
-    h.encode(&mut out);
-    encoded_path.encode(&mut out);
-    out.extend_from_slice(child_ref);
-    out
+    let mut stream = RlpStream::new_list(2);
+    stream.append(&encoded_path);
+    stream.append_raw(child_ref, 1);
+
+    stream.out()
 }
 
-pub struct HashBuilder<'nc> {
+pub(crate) struct HashBuilder<'nc> {
     pub(crate) node_collector: Option<NodeCollector<'nc>>,
     key: Vec<u8>,
     value: HashBuilderValue,
@@ -102,7 +90,7 @@ pub struct HashBuilder<'nc> {
 }
 
 impl<'nc> HashBuilder<'nc> {
-    pub fn new(node_collector: Option<NodeCollector<'nc>>) -> Self {
+    pub(crate) fn new(node_collector: Option<NodeCollector<'nc>>) -> Self {
         Self {
             node_collector,
             key: vec![],
@@ -119,7 +107,7 @@ impl<'nc> HashBuilder<'nc> {
         self.node_collector.is_some()
     }
 
-    pub fn add_leaf(&mut self, key: Vec<u8>, value: &[u8]) {
+    pub(crate) fn add_leaf(&mut self, key: Vec<u8>, value: &[u8]) {
         assert!(key > self.key);
         if !self.key.is_empty() {
             self.gen_struct_step(key.as_slice());
@@ -128,7 +116,7 @@ impl<'nc> HashBuilder<'nc> {
         self.value = HashBuilderValue::Bytes(value.to_vec());
     }
 
-    pub fn add_branch_node(&mut self, key: Vec<u8>, value: &H256, is_in_db_trie: bool) {
+    pub(crate) fn add_branch_node(&mut self, key: Vec<u8>, value: &H256, is_in_db_trie: bool) {
         assert!(key > self.key || (self.key.is_empty() && key.is_empty()));
         if !self.key.is_empty() {
             self.gen_struct_step(key.as_slice());
@@ -141,7 +129,7 @@ impl<'nc> HashBuilder<'nc> {
         self.is_in_db_trie = is_in_db_trie;
     }
 
-    pub fn compute_root_hash(&mut self) -> H256 {
+    pub(crate) fn compute_root_hash(&mut self) -> H256 {
         self.finalize();
         self.get_root_hash()
     }
@@ -300,44 +288,23 @@ impl<'nc> HashBuilder<'nc> {
         let mut child_hashes = Vec::<Vec<u8>>::with_capacity(hash_mask.count_ones() as usize);
         let first_child_idx = self.stack.len() - state_mask.count_ones() as usize;
 
-        let mut rlp_buffer = BytesMut::new();
-        {
-            // Length for the nil value added below
-            let mut h = fastrlp::Header {
-                list: true,
-                payload_length: 1,
-            };
-            let mut i = first_child_idx;
-            for digit in 0..16 {
-                if state_mask & (1u16 << digit) != 0 {
-                    h.payload_length += self.stack[i].len();
-                    i += 1;
-                } else {
-                    h.payload_length += 1;
+        let mut stream = RlpStream::new_list(17);
+        let mut i = first_child_idx;
+        for digit in 0..16 {
+            if state_mask & (1u16 << digit) != 0 {
+                if hash_mask & 1u16 << digit != 0 {
+                    child_hashes.push(self.stack[i].to_vec());
                 }
-            }
-            h.encode(&mut rlp_buffer);
-        }
-        {
-            let mut i = first_child_idx;
-            for digit in 0..16 {
-                if state_mask & (1u16 << digit) != 0 {
-                    if hash_mask & (1u16 << digit) != 0 {
-                        child_hashes.push(self.stack[i].clone());
-                    }
-                    rlp_buffer.extend_from_slice(&self.stack[i]);
-                    i += 1;
-                } else {
-                    rlp_buffer.put_u8(EMPTY_STRING_CODE);
-                }
+                stream.append_raw(&self.stack[i], 1);
+                i += 1;
+            } else {
+                stream.append_empty_data();
             }
         }
+        stream.append_empty_data();
 
-        // branch nodes with values are not supported
-        rlp_buffer.put_u8(EMPTY_STRING_CODE);
-
-        self.stack.resize(first_child_idx, vec![]);
-        self.stack.push(node_ref(&rlp_buffer));
+        self.stack.truncate(first_child_idx);
+        self.stack.push(node_ref(stream.out().as_ref()));
 
         child_hashes
     }
@@ -365,7 +332,7 @@ pub(crate) fn pack_nibbles(nibbles: &[u8]) -> Vec<u8> {
     out
 }
 
-pub fn unpack_nibbles(packed: &[u8]) -> Vec<u8> {
+pub(crate) fn unpack_nibbles(packed: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; packed.len() * 2];
     let mut i = 0;
     for b in packed {
@@ -380,7 +347,6 @@ pub fn unpack_nibbles(packed: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::crypto::trie_root;
-    use fastrlp::RlpEncodable;
     use hex_literal::hex;
 
     #[test]
@@ -431,30 +397,32 @@ mod tests {
         let hash1b = hash1;
         assert_eq!(hb1.compute_root_hash(), hash1);
 
-        #[derive(RlpEncodable)]
-        struct S<'a> {
-            a: &'a [u8],
-            b: &'a [u8],
+        let mut stream0 = RlpStream::new_list(2);
+        let path0 = encode_path(unpack_nibbles(&key0[1..]).as_slice(), true);
+        stream0.append(&path0);
+        stream0.append(&val0);
+        let entry0 = stream0.out().to_vec();
+
+        let mut stream1 = RlpStream::new_list(2);
+        let path1 = encode_path(unpack_nibbles(&key1[1..]).as_slice(), true);
+        stream1.append(&path1);
+        stream1.append(&val1);
+        let entry1 = stream1.out().to_vec();
+
+        let mut stream = RlpStream::new_list(17);
+        for _ in 0..4 {
+            stream.append_empty_data();
+        }
+        stream.append_raw(entry0.as_slice(), 1);
+        for _ in 5..7 {
+            stream.append_empty_data();
+        }
+        stream.append_raw(entry1.as_slice(), 1);
+        for _ in 8..17 {
+            stream.append_empty_data();
         }
 
-        let path0 = encode_path(unpack_nibbles(&key0[1..]).as_slice(), true);
-        let entry0 = S {
-            a: &path0,
-            b: &val0,
-        };
-
-        let path1 = encode_path(unpack_nibbles(&key1[1..]).as_slice(), true);
-        let entry1 = S {
-            a: &path1,
-            b: &val1,
-        };
-
-        let mut enc: [&dyn Encodable; 17] = [b""; 17];
-        enc[4] = &entry0;
-        enc[7] = &entry1;
-        let mut branch_node_rlp = BytesMut::new();
-        fastrlp::encode_list::<dyn Encodable, _>(&enc, &mut branch_node_rlp);
-
+        let branch_node_rlp = stream.out();
         let branch_node_hash = keccak256(branch_node_rlp);
 
         let mut hb2 = HashBuilder::new(None);

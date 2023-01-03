@@ -14,7 +14,6 @@ use anyhow::{bail, ensure, format_err};
 use bytes::Bytes;
 use clap::Parser;
 use educe::Educe;
-use fastrlp::*;
 use maplit::*;
 use once_cell::sync::Lazy;
 use serde::{de, Deserialize};
@@ -559,7 +558,7 @@ fn run_block<'state>(
     block_common: &BlockCommon,
     blockchain: &mut Blockchain<'state>,
 ) -> anyhow::Result<()> {
-    let block = <Block as Decodable>::decode(&mut &*block_common.rlp)?;
+    let block = rlp::decode::<Block>(&block_common.rlp)?;
 
     debug!("Running block {:?}", block);
 
@@ -657,7 +656,7 @@ fn result_is_expected(
 /// https://ethereum-tests.readthedocs.io/en/latest/test_types/blockchain_tests.html
 #[instrument(skip(testdata))]
 fn blockchain_test(testdata: BlockchainTest) -> anyhow::Result<()> {
-    let genesis_block = <Block as Decodable>::decode(&mut &*testdata.genesis_rlp).unwrap();
+    let genesis_block = rlp::decode::<Block>(&*testdata.genesis_rlp).unwrap();
 
     let mut state = InMemoryState::default();
     let config = NETWORK_CONFIG[&testdata.network].clone();
@@ -714,7 +713,7 @@ pub struct TransactionTest {
 // https://ethereum-tests.readthedocs.io/en/latest/test_types/transaction_tests.html
 #[instrument(skip(testdata))]
 fn transaction_test(testdata: TransactionTest) -> anyhow::Result<()> {
-    let txn = <hana::models::MessageWithSignature as Decodable>::decode(&mut &*testdata.txbytes);
+    let txn = rlp::decode::<hana::models::MessageWithSignature>(&testdata.txbytes);
 
     for (key, t) in testdata.result {
         match (&txn, t) {

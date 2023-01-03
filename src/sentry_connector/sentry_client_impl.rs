@@ -6,9 +6,7 @@ use super::{
 };
 use crate::models::*;
 use async_trait::async_trait;
-use bytes::BytesMut;
 use ethereum_interfaces::{sentry as grpc_sentry, types as grpc_types};
-use fastrlp::*;
 use futures_core::Stream;
 use std::pin::Pin;
 use tokio_stream::StreamExt;
@@ -72,11 +70,9 @@ impl SentryClient for SentryClientImpl {
         peer_filter: PeerFilter,
     ) -> anyhow::Result<u32> {
         let message_id = message.eth_id();
-        let mut data = BytesMut::new();
-        message.encode(&mut data);
         let message_data = grpc_sentry::OutboundMessageData {
             id: grpc_sentry::MessageId::from(message_id) as i32,
-            data: data.freeze(),
+            data: rlp::encode(&message).into(),
         };
 
         let response = match peer_filter {

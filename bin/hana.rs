@@ -18,7 +18,6 @@ use hana::{
 use anyhow::{bail, format_err, Context};
 use async_trait::async_trait;
 use clap::Parser;
-use fastrlp::*;
 use rayon::prelude::*;
 use std::{
     panic,
@@ -175,8 +174,8 @@ where
             canonical_cur.append(block_number, canonical_hash)?;
             header_cur.append(
                 (block_number, canonical_hash),
-                <BlockHeader as Decodable>::decode(
-                    &mut &*erigon_header_cur
+                rlp::decode(
+                    &erigon_header_cur
                         .seek_exact(TableEncode::encode((block_number, canonical_hash)).to_vec())?
                         .unwrap()
                         .1,
@@ -335,7 +334,7 @@ where
                             continue;
                         }
 
-                        let body = <BodyForStorage as Decodable>::decode(&mut &*v)?;
+                        let body = rlp::decode::<BodyForStorage>(&v)?;
 
                         let base_tx_id = body.base_tx_id;
 
@@ -391,11 +390,9 @@ where
                         body.uncles,
                         txs.into_iter()
                             .map(|v| {
-                                Ok(<hana::models::MessageWithSignature as Decodable>::decode(
-                                    &mut &*v,
-                                )?
-                                .encode()
-                                .to_vec())
+                                Ok(rlp::decode::<hana::models::MessageWithSignature>(&v)?
+                                    .encode()
+                                    .to_vec())
                             })
                             .collect::<anyhow::Result<Vec<_>>>()?,
                     ))
