@@ -1,10 +1,8 @@
 use crate::{
     kv::{mdbx::*, tables},
     models::*,
-    res::chainspec::MAINNET,
     state::*,
 };
-use anyhow::format_err;
 use tempfile::TempDir;
 
 #[derive(Clone, Debug)]
@@ -64,23 +62,14 @@ impl GenesisState {
 pub fn initialize_genesis<'db, E>(
     txn: &MdbxTransaction<'db, RW, E>,
     etl_temp_dir: &TempDir,
-    chainspec: Option<ChainSpec>,
-) -> anyhow::Result<(ChainSpec, bool)>
+    chainspec: ChainSpec,
+) -> anyhow::Result<bool>
 where
     E: EnvironmentKind,
 {
-    if let Some(existing_chainspec) = txn.get(tables::Config, ())? {
-        if let Some(chainspec) = chainspec {
-            if chainspec != existing_chainspec {
-                return Err(format_err!(
-                    "Genesis initialized, but chainspec does not match one in database"
-                ));
-            }
-        }
-        return Ok((existing_chainspec, false));
+    if txn.get(tables::Config, ())?.is_some() {
+        return Ok(false);
     }
-
-    let chainspec = chainspec.unwrap_or_else(|| MAINNET.clone());
 
     let genesis = chainspec.genesis.number;
     let mut state_buffer = Buffer::new(txn, None);
@@ -150,9 +139,9 @@ where
 
     txn.set(tables::LastHeader, (), block_hash)?;
 
-    txn.set(tables::Config, (), chainspec.clone())?;
+    txn.set(tables::Config, (), chainspec)?;
 
-    Ok((chainspec, true))
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -189,7 +178,9 @@ mod tests {
         let tx = db.begin_mutable().unwrap();
 
         let temp_dir = TempDir::new().unwrap();
-        assert!(initialize_genesis(&tx, &temp_dir, None).unwrap().1);
+        assert!(
+            initialize_genesis(&tx, &temp_dir, crate::res::chainspec::MAINNET.clone()).unwrap()
+        );
 
         let genesis_hash = tx.get(tables::CanonicalHeader, 0.into()).unwrap().unwrap();
 
