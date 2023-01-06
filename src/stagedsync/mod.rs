@@ -338,10 +338,10 @@ where
                                         debug!(
                                             prune_to = *prune_to,
                                             progress = *prune_progress,
-                                            "No pruning required"
+                                            "Prune point too far to prune"
                                         );
 
-                                        continue;
+                                        return Ok(());
                                     }
                                 }
 
