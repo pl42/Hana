@@ -9,7 +9,7 @@ use hana::{
     models::*,
     rpc::eth::EthApiServerImpl,
     sentry_connector::{
-        sentry_client_connector::SentryClientConnectorImpl,
+        chain_config::ChainConfig, sentry_client_connector::SentryClientConnectorImpl,
         sentry_client_reactor::SentryClientReactor,
     },
     stagedsync::{self, stage::*, stages::*, util::*},
@@ -24,6 +24,7 @@ use fastrlp::*;
 use jsonrpsee::http_server::HttpServerBuilder;
 use rayon::prelude::*;
 use std::{
+    fs::File,
     future::pending,
     net::SocketAddr,
     panic,
@@ -46,13 +47,13 @@ pub struct Opt {
     #[clap(long = "datadir", help = "Database directory path", default_value_t)]
     pub data_dir: HanaDataDir,
 
-    /// Name of the testnet to join
-    #[clap(
-        long = "chain",
-        help = "Name of the testnet to join",
-        default_value = "mainnet"
-    )]
-    pub chain_name: String,
+    /// Name of the network to join
+    #[clap(long)]
+    pub chain: Option<String>,
+
+    /// Chain spec file to use
+    #[clap(long)]
+    pub chain_spec_file: Option<PathBuf>,
 
     /// Sentry GRPC service URL
     #[clap(
@@ -626,8 +627,15 @@ fn main() -> anyhow::Result<()> {
             rt.block_on(async move {
                 info!("Starting Hana ({})", version_string());
 
-                let chains_config = hana::sentry_connector::chain_config::ChainsConfig::new()?;
-                let chain_config = chains_config.get(&opt.chain_name)?;
+                let chain_config = if let Some(chain) = opt.chain {
+                    let chains_config = hana::sentry_connector::chain_config::ChainsConfig::new()?;
+                    let chain_config = chains_config.get(&chain)?;
+                    Some(chain_config.chain_spec().clone())
+                } else if let Some(chain_path) = opt.chain_spec_file {
+                    Some(ron::de::from_reader(File::open(chain_path)?)?)
+                } else {
+                    None
+                };
 
                 // database setup
                 let erigon_db = if let Some(erigon_data_dir) = opt.erigon_data_dir {
@@ -652,18 +660,20 @@ fn main() -> anyhow::Result<()> {
                         .context("failed to create ETL temp dir")?,
                 );
                 let db = Arc::new(hana::kv::new_database(&hana_chain_data_dir)?);
-                {
+                let chainspec = {
                     let span = span!(Level::INFO, "", " Genesis initialization ");
                     let _g = span.enter();
                     let txn = db.begin_mutable()?;
-                    if hana::genesis::initialize_genesis(
-                        &txn,
-                        &*etl_temp_dir,
-                        chain_config.chain_spec().clone(),
-                    )? {
+                    let (chainspec, initialized) =
+                        hana::genesis::initialize_genesis(&txn, &*etl_temp_dir, chain_config)?;
+                    if initialized {
                         txn.commit()?;
                     }
-                }
+
+                    chainspec
+                };
+
+                let chain_config = ChainConfig::new(chainspec);
 
                 if let Some(listen_address) = opt.rpc_listen_address {
                     let db = db.clone();
@@ -757,6 +767,14 @@ fn main() -> anyhow::Result<()> {
                     staged_sync.push(HashState::new(etl_temp_dir.clone(), None));
                     staged_sync.push(Interhashes::new(etl_temp_dir.clone(), None));
                 }
+                staged_sync.push(AccountHistoryIndex {
+                    temp_dir: etl_temp_dir.clone(),
+                    flush_interval: 50_000,
+                });
+                staged_sync.push(StorageHistoryIndex {
+                    temp_dir: etl_temp_dir.clone(),
+                    flush_interval: 50_000,
+                });
                 staged_sync.push(TxLookup {
                     temp_dir: etl_temp_dir.clone(),
                 });
@@ -769,7 +787,11 @@ fn main() -> anyhow::Result<()> {
                 info!("Running staged sync");
                 staged_sync.run(&db).await?;
 
-                Ok(())
+                if opt.exit_after_sync {
+                    Ok(())
+                } else {
+                    pending().await
+                }
             })
         })?
         .join()
