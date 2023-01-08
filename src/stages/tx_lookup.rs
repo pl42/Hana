@@ -34,40 +34,41 @@ where
     where
         'db: 'tx,
     {
-        let mut cursor = tx.cursor(tables::BlockTransactionLookup.erased())?;
+        let mut tx_hash_cursor = tx.cursor(tables::BlockTransactionLookup.erased())?;
 
         let mut collector = TableCollector::new(&*self.temp_dir, OPTIMAL_BUFFER_CAPACITY);
-        let mut highest_block = input.stage_progress.unwrap_or(BlockNumber(0));
-        let start_block = highest_block + 1;
+        let last_processed_block_number = tx
+            .get(tables::SyncStage, TX_LOOKUP)?
+            .unwrap_or(BlockNumber(0))
+            .0;
+        let start_block_number = last_processed_block_number + 1;
 
-        let walker_block_body = tx.cursor(tables::BlockBody)?.walk(Some(start_block));
+        let walker_block_body = tx
+            .cursor(tables::BlockBody)?
+            .walk(Some(BlockNumber(start_block_number)));
         pin!(walker_block_body);
 
-        while let Some((
-            (block_number, _),
-            BodyForStorage {
-                base_tx_id,
-                tx_amount,
-                ..
-            },
-        )) = walker_block_body.next().transpose()?
-        {
+        while let Some(((block_number, _), ref body_rpl)) = walker_block_body.next().transpose()? {
+            let (tx_count, tx_base_id) = (body_rpl.tx_amount, body_rpl.base_tx_id);
+
             let walker_block_txs = tx
                 .cursor(tables::BlockTransaction)?
-                .walk(Some(base_tx_id))
-                .take(tx_amount.try_into()?);
+                .walk(Some(tx_base_id))
+                .take(tx_count.try_into()?);
             pin!(walker_block_txs);
 
             while let Some((_, tx)) = walker_block_txs.next().transpose()? {
                 collector.push(tx.hash(), tables::TruncateStart(block_number));
             }
-
-            highest_block = block_number;
         }
 
-        collector.load(&mut cursor)?;
+        collector.load(&mut tx_hash_cursor)?;
+        info!("Processed");
         Ok(ExecOutput::Progress {
-            stage_progress: highest_block,
+            stage_progress: input
+                .previous_stage
+                .map(|(_, stage)| stage)
+                .unwrap_or_default(),
             done: true,
         })
     }
@@ -390,7 +391,7 @@ mod tests {
         assert_eq!(
             output,
             ExecOutput::Progress {
-                stage_progress: 0.into(),
+                stage_progress: 3.into(),
                 done: true,
             }
         );

@@ -18,32 +18,18 @@ pub mod account {
                 address_to_find,
                 block_number,
             )? {
-                return Ok(tx
+                if let Some(tables::AccountChange { address, account }) = tx
                     .cursor(tables::AccountChangeSet)?
-                    .find_account(block_number, address_to_find)?
-                    .flatten());
+                    .seek_both_range(block_number, address_to_find)?
+                {
+                    if address == address_to_find {
+                        return Ok(account);
+                    }
+                }
             }
         }
 
         tx.get(tables::Account, address_to_find)
-    }
-
-    impl<'tx, K: TransactionKind> MdbxCursor<'tx, K, tables::AccountChangeSet> {
-        pub fn find_account(
-            &mut self,
-            block_number: BlockNumber,
-            address_to_find: Address,
-        ) -> anyhow::Result<Option<Option<Account>>> {
-            if let Some(tables::AccountChange { address, account }) =
-                self.seek_both_range(block_number, address_to_find)?
-            {
-                if address == address_to_find {
-                    return Ok(Some(account));
-                }
-            }
-
-            Ok(None)
-        }
     }
 }
 
