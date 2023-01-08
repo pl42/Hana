@@ -79,10 +79,7 @@ igd = { git = "https://github.com/stevefan1999-personal/rust-igd", features = [
     "tokio1",
 ] }
 itertools = "0.10"
-jsonrpsee = { git = "https://github.com/paritytech/jsonrpsee", features = [
-    "server",
-    "macros",
-] }
+jsonrpsee = { version = "0.10", features = ["server", "macros"] }
 lru = "0.7"
 maplit = "1"
 mdbx = { package = "libmdbx", version = "0.1" }
@@ -112,7 +109,7 @@ serde_with = "1"
 sha2 = "0.10"
 sha3 = "0.10"
 snap = "1"
-string = { git = "https://github.com/carllerche/string" }
+string = "0.3"
 strum = { version = "0.24", features = ["derive"] }
 strum_macros = "0.24"
 stubborn-io = "0.3"
