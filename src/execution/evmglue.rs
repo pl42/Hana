@@ -36,8 +36,7 @@ where
     analysis_cache: &'analysis mut AnalysisCache,
     header: &'h PartialHeader,
     block_spec: &'c BlockExecutionSpec,
-    message: &'t Message,
-    sender: Address,
+    txn: &'t MessageWithSender,
     beneficiary: Address,
 }
 
@@ -47,8 +46,7 @@ pub fn execute<'db, 'tracer, 'analysis, B: State>(
     analysis_cache: &'analysis mut AnalysisCache,
     header: &PartialHeader,
     block_spec: &BlockExecutionSpec,
-    message: &Message,
-    sender: Address,
+    txn: &MessageWithSender,
     gas: u64,
 ) -> anyhow::Result<CallResult> {
     let mut evm = Evm {
@@ -57,19 +55,18 @@ pub fn execute<'db, 'tracer, 'analysis, B: State>(
         analysis_cache,
         state,
         block_spec,
-        message,
-        sender,
+        txn,
         beneficiary: header.beneficiary,
     };
 
-    let res = if let TransactionAction::Call(to) = message.action() {
+    let res = if let TransactionAction::Call(to) = txn.action() {
         evm.call(&InterpreterMessage {
             kind: CallKind::Call,
             is_static: false,
             depth: 0,
-            sender,
-            input_data: message.input().clone(),
-            value: message.value(),
+            sender: txn.sender,
+            input_data: txn.input().clone(),
+            value: txn.value(),
             gas: gas as i64,
             recipient: to,
             code_address: to,
@@ -78,9 +75,9 @@ pub fn execute<'db, 'tracer, 'analysis, B: State>(
         evm.create(&CreateMessage {
             depth: 0,
             gas: gas as i64,
-            sender,
-            initcode: message.input().clone(),
-            endowment: message.value(),
+            sender: txn.sender,
+            initcode: txn.input().clone(),
+            endowment: txn.value(),
             salt: None,
         })?
     };
@@ -128,7 +125,7 @@ where
             message.depth.try_into().unwrap(),
             message.sender,
             contract_addr,
-            MessageKind::Create { salt: message.salt },
+            MessageKind::Create,
             message.initcode.clone(),
             message.gas.try_into().unwrap(),
             message.endowment,
@@ -556,7 +553,7 @@ impl<'r, 'state, 'tracer, 'analysis, 'h, 'c, 't, 'a, B: State> Host
             .unwrap();
         self.inner.state.set_balance(address, 0).unwrap();
 
-        self.tracer(|t| t.capture_self_destruct(address, beneficiary, balance));
+        self.tracer(|t| t.capture_self_destruct(address, beneficiary));
     }
 
     fn call(&mut self, msg: Call) -> Output {
@@ -578,8 +575,8 @@ impl<'r, 'state, 'tracer, 'analysis, 'h, 'c, 't, 'a, B: State> Host
 
     fn get_tx_context(&mut self) -> TxContext {
         let base_fee_per_gas = self.inner.header.base_fee_per_gas.unwrap_or(U256::ZERO);
-        let tx_gas_price = self.inner.message.effective_gas_price(base_fee_per_gas);
-        let tx_origin = self.inner.sender;
+        let tx_gas_price = self.inner.txn.effective_gas_price(base_fee_per_gas);
+        let tx_origin = self.inner.txn.sender;
         let block_coinbase = self.inner.beneficiary;
         let block_number = self.inner.header.number.0;
         let block_timestamp = self.inner.header.timestamp;
@@ -654,8 +651,7 @@ mod tests {
     fn execute<B: State>(
         state: &mut IntraBlockState<'_, B>,
         header: &PartialHeader,
-        message: &Message,
-        sender: Address,
+        txn: &MessageWithSender,
         gas: u64,
     ) -> CallResult {
         let mut tracer = NoopTracer;
@@ -665,8 +661,7 @@ mod tests {
             &mut AnalysisCache::default(),
             header,
             &MAINNET.collect_block_spec(header.number),
-            message,
-            sender,
+            txn,
             gas,
         )
         .unwrap()
@@ -689,26 +684,29 @@ mod tests {
         assert_eq!(state.get_balance(sender).unwrap(), 0);
         assert_eq!(state.get_balance(to).unwrap(), 0);
 
-        let message = Message::Legacy {
-            action: TransactionAction::Call(to),
-            value: value.into(),
+        let txn = MessageWithSender {
+            message: Message::Legacy {
+                action: TransactionAction::Call(to),
+                value: value.into(),
 
-            chain_id: Default::default(),
-            nonce: Default::default(),
-            gas_price: Default::default(),
-            gas_limit: Default::default(),
-            input: Default::default(),
+                chain_id: Default::default(),
+                nonce: Default::default(),
+                gas_price: Default::default(),
+                gas_limit: Default::default(),
+                input: Default::default(),
+            },
+            sender,
         };
 
         let gas = 0;
 
-        let res = execute(&mut state, &header, &message, sender, gas);
+        let res = execute(&mut state, &header, &txn, gas);
         assert_eq!(res.status_code, StatusCode::InsufficientBalance);
         assert_eq!(res.output_data, vec![]);
 
         state.add_to_balance(sender, ETHER).unwrap();
 
-        let res = execute(&mut state, &header, &message, sender, gas);
+        let res = execute(&mut state, &header, &txn, gas);
         assert_eq!(res.status_code, StatusCode::Success);
         assert_eq!(res.output_data, vec![]);
 
@@ -751,25 +749,28 @@ mod tests {
         let mut db = InMemoryState::default();
         let mut state = IntraBlockState::new(&mut db);
 
-        let m = |action, input| Message::Legacy {
-            input,
-            action,
+        let txn = |action, input| MessageWithSender {
+            message: Message::Legacy {
+                input,
+                action,
 
-            chain_id: Default::default(),
-            nonce: Default::default(),
-            gas_price: Default::default(),
-            gas_limit: Default::default(),
-            value: Default::default(),
+                chain_id: Default::default(),
+                nonce: Default::default(),
+                gas_price: Default::default(),
+                gas_limit: Default::default(),
+                value: Default::default(),
+            },
+            sender: caller,
         };
 
-        let message = (m)(TransactionAction::Create, code.to_vec().into());
+        let t = (txn)(TransactionAction::Create, code.to_vec().into());
         let gas = 0;
-        let res = execute(&mut state, &header, &message, caller, gas);
+        let res = execute(&mut state, &header, &t, gas);
         assert_eq!(res.status_code, StatusCode::OutOfGas);
         assert_eq!(res.output_data, vec![]);
 
         let gas = 50_000;
-        let res = execute(&mut state, &header, &message, caller, gas);
+        let res = execute(&mut state, &header, &t, gas);
         assert_eq!(res.status_code, StatusCode::Success);
         assert_eq!(res.output_data, bytes!("600035600055"));
 
@@ -785,11 +786,10 @@ mod tests {
         let res = execute(
             &mut state,
             &header,
-            &(m)(
+            &(txn)(
                 TransactionAction::Call(contract_address),
                 u256_to_h256(new_val).0.to_vec().into(),
             ),
-            caller,
             gas,
         );
         assert_eq!(res.status_code, StatusCode::Success);
@@ -803,7 +803,7 @@ mod tests {
     #[test]
     fn maximum_call_depth() {
         std::thread::Builder::new()
-            .stack_size(128 * 1024 * 1024)
+            .stack_size(64 * 1024 * 1024)
             .spawn(move || {
                 let header = PartialHeader {
                     number: 1_431_916.into(),
@@ -851,19 +851,22 @@ mod tests {
 
                 state.set_code(contract, code.to_vec().into()).unwrap();
 
-                let m = |input| Message::Legacy {
-                    action: TransactionAction::Call(contract),
-                    input,
+                let txn = |input| MessageWithSender {
+                    sender: caller,
+                    message: Message::Legacy {
+                        action: TransactionAction::Call(contract),
+                        input,
 
-                    chain_id: Default::default(),
-                    nonce: Default::default(),
-                    gas_price: Default::default(),
-                    gas_limit: Default::default(),
-                    value: Default::default(),
+                        chain_id: Default::default(),
+                        nonce: Default::default(),
+                        gas_price: Default::default(),
+                        gas_limit: Default::default(),
+                        value: Default::default(),
+                    },
                 };
 
                 let gas = 1_000_000;
-                let res = execute(&mut state, &header, &(m)(Default::default()), caller, gas);
+                let res = execute(&mut state, &header, &(txn)(Default::default()), gas);
                 assert_eq!(res.status_code, StatusCode::Success);
                 assert_eq!(res.output_data, vec![]);
 
@@ -871,8 +874,7 @@ mod tests {
                 let res = execute(
                     &mut state,
                     &header,
-                    &(m)(H256::from_low_u64_be(num_of_recursions).0.to_vec().into()),
-                    caller,
+                    &(txn)(H256::from_low_u64_be(num_of_recursions).0.to_vec().into()),
                     gas,
                 );
                 assert_eq!(res.status_code, StatusCode::Success);
@@ -882,8 +884,7 @@ mod tests {
                 let res = execute(
                     &mut state,
                     &header,
-                    &(m)(H256::from_low_u64_be(num_of_recursions).0.to_vec().into()),
-                    caller,
+                    &(txn)(H256::from_low_u64_be(num_of_recursions).0.to_vec().into()),
                     gas,
                 );
                 assert_eq!(res.status_code, StatusCode::InvalidInstruction);
@@ -932,19 +933,22 @@ mod tests {
             .set_code(callee_address, callee_code.to_vec().into())
             .unwrap();
 
-        let message = Message::Legacy {
-            action: TransactionAction::Call(caller_address),
-            input: H256::from(callee_address).0.to_vec().into(),
+        let txn = MessageWithSender {
+            message: Message::Legacy {
+                action: TransactionAction::Call(caller_address),
+                input: H256::from(callee_address).0.to_vec().into(),
 
-            chain_id: Default::default(),
-            nonce: Default::default(),
-            gas_price: Default::default(),
-            gas_limit: Default::default(),
-            value: Default::default(),
+                chain_id: Default::default(),
+                nonce: Default::default(),
+                gas_price: Default::default(),
+                gas_limit: Default::default(),
+                value: Default::default(),
+            },
+            sender: caller_address,
         };
 
         let gas = 1_000_000;
-        let res = execute(&mut state, &header, &message, caller_address, gas);
+        let res = execute(&mut state, &header, &txn, gas);
         assert_eq!(res.status_code, StatusCode::Success);
         assert_eq!(res.output_data, vec![]);
 
@@ -1001,19 +1005,22 @@ mod tests {
         let mut db = InMemoryState::default();
         let mut state = IntraBlockState::new(&mut db);
 
-        let message = Message::Legacy {
-            action: TransactionAction::Create,
-            input: code.to_vec().into(),
+        let txn = MessageWithSender {
+            message: Message::Legacy {
+                action: TransactionAction::Create,
+                input: code.to_vec().into(),
 
-            chain_id: Default::default(),
-            nonce: Default::default(),
-            gas_price: Default::default(),
-            gas_limit: Default::default(),
-            value: Default::default(),
+                chain_id: Default::default(),
+                nonce: Default::default(),
+                gas_price: Default::default(),
+                gas_limit: Default::default(),
+                value: Default::default(),
+            },
+            sender: caller,
         };
 
         let gas = 150_000;
-        let res = execute(&mut state, &header, &message, caller, gas);
+        let res = execute(&mut state, &header, &txn, gas);
         assert_eq!(res.status_code, StatusCode::Success);
         assert_eq!(res.output_data, vec![]);
 
@@ -1046,19 +1053,22 @@ mod tests {
             .set_code(contract_address, old_code.to_vec().into())
             .unwrap();
 
-        let message = Message::Legacy {
-            action: TransactionAction::Create,
-            input: new_code.to_vec().into(),
+        let txn = MessageWithSender {
+            message: Message::Legacy {
+                action: TransactionAction::Create,
+                input: new_code.to_vec().into(),
 
-            chain_id: Default::default(),
-            nonce: Default::default(),
-            gas_price: Default::default(),
-            gas_limit: Default::default(),
-            value: Default::default(),
+                chain_id: Default::default(),
+                nonce: Default::default(),
+                gas_price: Default::default(),
+                gas_limit: Default::default(),
+                value: Default::default(),
+            },
+            sender: caller,
         };
 
         let gas = 100_000;
-        let res = execute(&mut state, &header, &message, caller, gas);
+        let res = execute(&mut state, &header, &txn, gas);
 
         assert_eq!(res.status_code, StatusCode::InvalidInstruction);
         assert_eq!(res.gas_left, 0);
@@ -1075,48 +1085,50 @@ mod tests {
         let mut db = InMemoryState::default();
         let mut state = IntraBlockState::new(&mut db);
 
-        let sender = hex!("1000000000000000000000000000000000000000").into();
-        let m = |input| Message::Legacy {
-            action: TransactionAction::Create,
-            input,
+        let t = |input| MessageWithSender {
+            message: Message::Legacy {
+                action: TransactionAction::Create,
+                input,
 
-            chain_id: Default::default(),
-            nonce: Default::default(),
-            gas_price: Default::default(),
-            gas_limit: Default::default(),
-            value: Default::default(),
+                chain_id: Default::default(),
+                nonce: Default::default(),
+                gas_price: Default::default(),
+                gas_limit: Default::default(),
+                value: Default::default(),
+            },
+            sender: hex!("1000000000000000000000000000000000000000").into(),
         };
 
         let gas = 50_000;
 
         // https://eips.ethereum.org/EIPS/eip-3541#test-cases
-        let message = (m)(hex!("60ef60005360016000f3").to_vec().into());
+        let txn = (t)(hex!("60ef60005360016000f3").to_vec().into());
         assert_eq!(
-            execute(&mut state, &header, &message, sender, gas).status_code,
+            execute(&mut state, &header, &txn, gas).status_code,
             StatusCode::ContractValidationFailure
         );
 
-        let message = (m)(hex!("60ef60005360026000f3").to_vec().into());
+        let txn = (t)(hex!("60ef60005360026000f3").to_vec().into());
         assert_eq!(
-            execute(&mut state, &header, &message, sender, gas).status_code,
+            execute(&mut state, &header, &txn, gas).status_code,
             StatusCode::ContractValidationFailure
         );
 
-        let message = (m)(hex!("60ef60005360036000f3").to_vec().into());
+        let txn = (t)(hex!("60ef60005360036000f3").to_vec().into());
         assert_eq!(
-            execute(&mut state, &header, &message, sender, gas).status_code,
+            execute(&mut state, &header, &txn, gas).status_code,
             StatusCode::ContractValidationFailure
         );
 
-        let message = (m)(hex!("60ef60005360206000f3").to_vec().into());
+        let txn = (t)(hex!("60ef60005360206000f3").to_vec().into());
         assert_eq!(
-            execute(&mut state, &header, &message, sender, gas).status_code,
+            execute(&mut state, &header, &txn, gas).status_code,
             StatusCode::ContractValidationFailure
         );
 
-        let message = (m)(hex!("60fe60005360016000f3").to_vec().into());
+        let txn = (t)(hex!("60fe60005360016000f3").to_vec().into());
         assert_eq!(
-            execute(&mut state, &header, &message, sender, gas).status_code,
+            execute(&mut state, &header, &txn, gas).status_code,
             StatusCode::Success
         );
     }

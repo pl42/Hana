@@ -1,20 +1,20 @@
 use crate::sentry::{
     devp2p::{PeerId, *},
     eth::*,
-    CapabilityServerImpl, OutboundSender,
+    CapabilityServerImpl,
 };
 use async_trait::async_trait;
 use ethereum_interfaces::{
     sentry::{
-        sentry_server::Sentry, HandShakeReply, InboundMessage, MessageId as ProtoMessageId,
-        OutboundMessageData, PeerEvent, PeerEventsRequest, PeerMinBlockRequest, SentPeers,
+        sentry_server::*, HandShakeReply, InboundMessage, MessageId as ProtoMessageId,
+        OutboundMessageData, PeerMinBlockRequest, PeersReply, PeersRequest, SentPeers,
         SetStatusReply,
     },
     types::NodeInfoReply,
 };
-use futures::{stream::FuturesUnordered, Stream, TryStreamExt};
+use futures_util::{stream::FuturesUnordered, Stream, TryStreamExt};
 use num_traits::ToPrimitive;
-use secp256k1::rand::prelude::IteratorRandom;
+use secp256k1::rand::seq::IteratorRandom;
 use std::{collections::HashSet, convert::TryFrom, pin::Pin, sync::Arc};
 use tokio_stream::{
     wrappers::{errors::BroadcastStreamRecvError, BroadcastStream},
@@ -25,8 +25,9 @@ use tracing::*;
 
 pub type InboundMessageStream =
     Pin<Box<dyn Stream<Item = anyhow::Result<InboundMessage, tonic::Status>> + Send + Sync>>;
+
 pub type PeersReplyStream =
-    Pin<Box<dyn Stream<Item = anyhow::Result<PeerEvent, tonic::Status>> + Send + Sync>>;
+    Pin<Box<dyn Stream<Item = anyhow::Result<PeersReply, tonic::Status>> + Send + Sync>>;
 
 pub struct SentryService {
     capability_server: Arc<CapabilityServerImpl>,
@@ -58,18 +59,6 @@ impl SentryService {
         })
     }
 
-    fn gather_senders<F, IT>(&self, pred: F) -> Vec<(OutboundSender, PeerId)>
-    where
-        F: FnOnce(&CapabilityServerImpl) -> IT,
-        IT: IntoIterator<Item = PeerId>,
-    {
-        let g = self.capability_server.peer_pipes.read();
-        (pred)(&*self.capability_server)
-            .into_iter()
-            .filter_map(|peer| g.get(&peer).map(|pipes| (pipes.sender.clone(), peer)))
-            .collect::<Vec<_>>()
-    }
-
     async fn try_send_by_predicate<F, IT>(
         &self,
         request: Option<OutboundMessageData>,
@@ -79,34 +68,49 @@ impl SentryService {
         F: FnOnce(&CapabilityServerImpl) -> IT,
         IT: IntoIterator<Item = PeerId>,
     {
-        let request = request.ok_or_else(|| anyhow::anyhow!("No request"))?;
-        let eth_id = EthMessageId::try_from(
-            ProtoMessageId::from_i32(request.id)
-                .ok_or_else(|| anyhow::anyhow!("Invalid message id: {}", request.id))?,
-        )?;
-        let capability_name = capability_name();
-        let id = eth_id.to_usize().unwrap();
-        let message = OutboundEvent::Message {
-            capability_name,
-            message: Message {
-                id,
-                data: request.data,
-            },
+        let request = request.ok_or_else(|| anyhow::anyhow!("empty request"))?;
+
+        let proto_id = ProtoMessageId::from_i32(request.id)
+            .ok_or_else(|| anyhow::anyhow!("unrecognized ProtoMessageId"))?;
+        let eth_id = EthMessageId::try_from(proto_id)?;
+
+        let message = Message {
+            id: eth_id.to_usize().unwrap(),
+            data: request.data,
         };
 
-        let senders = self.gather_senders(pred);
-        let peers = senders
+        let peers = (pred)(&*self.capability_server)
             .into_iter()
-            .map(|(tx, peer)| {
+            .map(|peer| {
                 let message = message.clone();
-                tokio::spawn(async move { tx.send(message.clone()).await.map(|_| peer.into()) })
+                async move { self.send_message(message, peer).await }
             })
             .collect::<FuturesUnordered<_>>()
-            .filter_map(|res| res.ok().and_then(|f| f.ok()))
+            .filter_map(|res| res.ok()) // ignore errors
+            .map(|peer_id| peer_id.into())
             .collect::<Vec<_>>()
             .await;
 
         Ok(SentPeers { peers })
+    }
+
+    async fn send_message(&self, message: Message, peer: PeerId) -> anyhow::Result<PeerId> {
+        let sender = self
+            .capability_server
+            .sender(peer)
+            .ok_or_else(|| anyhow::anyhow!("sender not found for peer"))?;
+
+        let outbound_message = OutboundEvent::Message {
+            capability_name: capability_name(),
+            message,
+        };
+
+        let result = sender.send(outbound_message).await;
+
+        match result {
+            Ok(_) => Ok(peer),
+            Err(error) => Err(anyhow::anyhow!(error)),
+        }
     }
 }
 
@@ -142,12 +146,12 @@ impl Sentry for SentryService {
         Ok(Response::new(reply))
     }
 
-    type PeerEventsStream = PeersReplyStream;
+    type PeersStream = PeersReplyStream;
 
-    async fn peer_events(
+    async fn peers(
         &self,
-        _request: tonic::Request<PeerEventsRequest>,
-    ) -> Result<Response<Self::PeerEventsStream>, tonic::Status> {
+        _request: tonic::Request<PeersRequest>,
+    ) -> Result<Response<Self::PeersStream>, tonic::Status> {
         let receiver = self.capability_server.peers_status_sender.subscribe();
         let stream = BroadcastStream::new(receiver)
             // map BroadcastStreamRecvError to tonic::Status
@@ -273,7 +277,11 @@ impl Sentry for SentryService {
         &self,
         request: tonic::Request<ethereum_interfaces::sentry::MessagesRequest>,
     ) -> Result<Response<Self::MessagesStream>, tonic::Status> {
-        let ids_set = request.into_inner().ids.into_iter().collect::<HashSet<_>>();
+        let ids_set = request
+            .into_inner()
+            .ids
+            .into_iter()
+            .collect::<HashSet<i32>>();
 
         let receiver = self.capability_server.data_sender.subscribe();
         let stream = BroadcastStream::new(receiver)

@@ -1,14 +1,7 @@
-use hana::{
-    binutil::HanaDataDir,
-    kv::{mdbx::*, MdbxWithDirHandle},
-    rpc::{
-        erigon::ErigonApiServerImpl, eth::EthApiServerImpl, net::NetApiServerImpl,
-        otterscan::OtterscanApiServerImpl,
-    },
-};
+use hana::{binutil::HanaDataDir, rpc::eth::EthApiServerImpl};
 use clap::Parser;
-use ethereum_jsonrpc::{ErigonApiServer, EthApiServer, NetApiServer, OtterscanApiServer};
-use jsonrpsee::{core::server::rpc_module::Methods, http_server::HttpServerBuilder};
+use ethereum_jsonrpc::EthApiServer;
+use jsonrpsee::http_server::HttpServerBuilder;
 use std::{future::pending, net::SocketAddr, sync::Arc};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -39,8 +32,8 @@ async fn main() -> anyhow::Result<()> {
         .with(env_filter)
         .init();
 
-    let db: Arc<MdbxWithDirHandle<NoWriteMap>> = Arc::new(
-        MdbxEnvironment::<NoWriteMap>::open_ro(
+    let db = Arc::new(
+        hana::kv::mdbx::MdbxEnvironment::<mdbx::NoWriteMap>::open_ro(
             mdbx::Environment::new(),
             &opt.datadir,
             hana::kv::tables::CHAINDATA_TABLES.clone(),
@@ -51,22 +44,13 @@ async fn main() -> anyhow::Result<()> {
     let server = HttpServerBuilder::default()
         .build(opt.listen_address)
         .await?;
-
-    let mut api = Methods::new();
-    api.merge(
+    let _server_handle = server.start(
         EthApiServerImpl {
-            db: db.clone(),
+            db,
             call_gas_limit: 100_000_000,
         }
         .into_rpc(),
-    )
-    .unwrap();
-    api.merge(NetApiServerImpl.into_rpc()).unwrap();
-    api.merge(ErigonApiServerImpl { db: db.clone() }.into_rpc())
-        .unwrap();
-    api.merge(OtterscanApiServerImpl { db }.into_rpc()).unwrap();
-
-    let _server_handle = server.start(api)?;
+    )?;
 
     pending().await
 }

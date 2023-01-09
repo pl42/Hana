@@ -1,6 +1,7 @@
 use crate::sentry::devp2p::types::*;
 use async_stream::stream;
-use futures::{stream::BoxStream, StreamExt};
+use futures_core::stream::BoxStream;
+use futures_util::StreamExt;
 use std::{collections::HashMap, net::SocketAddr, pin::Pin, task::Poll, time::Duration};
 use tokio::time::sleep;
 use tokio_stream::Stream;

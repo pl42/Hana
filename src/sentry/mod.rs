@@ -5,13 +5,12 @@ use async_stream::stream;
 use async_trait::async_trait;
 use devp2p::*;
 use educe::Educe;
-use ethereum_interfaces::sentry::{self, InboundMessage, PeerEvent};
+use ethereum_interfaces::sentry::{self, InboundMessage, PeersReply};
 use fastrlp::Decodable;
-use futures::stream::BoxStream;
+use futures_core::stream::BoxStream;
 use num_traits::{FromPrimitive, ToPrimitive};
 use parking_lot::RwLock;
 use std::{
-    self,
     collections::{btree_map::Entry, hash_map::Entry as HashMapEntry, BTreeMap, HashMap, HashSet},
     fmt::Debug,
     num::NonZeroUsize,
@@ -31,7 +30,6 @@ use tracing::*;
 pub mod devp2p;
 pub mod eth;
 pub mod grpc;
-pub mod opts;
 pub mod services;
 
 type OutboundSender = Sender<OutboundEvent>;
@@ -39,14 +37,8 @@ type OutboundReceiver = Arc<AsyncMutex<BoxStream<'static, OutboundEvent>>>;
 
 pub const BUFFERING_FACTOR: usize = 5;
 
-/// INITIAL_WINDOW_SIZE upper bound
-pub const MAX_INITIAL_WINDOW_SIZE: u32 = (1 << 31) - 1;
-
-/// MAX_FRAME_SIZE upper bound
-pub const MAX_FRAME_SIZE: u32 = (1 << 24) - 1;
-
 #[derive(Clone)]
-pub struct Pipes {
+struct Pipes {
     sender: OutboundSender,
     receiver: OutboundReceiver,
 }
@@ -107,7 +99,7 @@ impl BlockTracker {
 #[educe(Debug)]
 pub struct CapabilityServerImpl {
     #[educe(Debug(ignore))]
-    pub peer_pipes: Arc<RwLock<HashMap<PeerId, Pipes>>>,
+    peer_pipes: Arc<RwLock<HashMap<PeerId, Pipes>>>,
     block_tracker: Arc<RwLock<BlockTracker>>,
 
     status_message: Arc<RwLock<Option<FullStatusData>>>,
@@ -115,7 +107,7 @@ pub struct CapabilityServerImpl {
     valid_peers: Arc<RwLock<HashSet<PeerId>>>,
 
     data_sender: BroadcastSender<InboundMessage>,
-    peers_status_sender: BroadcastSender<PeerEvent>,
+    peers_status_sender: BroadcastSender<PeersReply>,
 
     no_new_peers: Arc<AtomicBool>,
 }
@@ -176,10 +168,9 @@ impl CapabilityServerImpl {
 
         let send_status_result =
             self.peers_status_sender
-                .send(ethereum_interfaces::sentry::PeerEvent {
+                .send(ethereum_interfaces::sentry::PeersReply {
                     peer_id: Some(ethereum_interfaces::types::H512::from(peer)),
-                    event_id: ethereum_interfaces::sentry::peer_event::PeerEventId::Disconnect
-                        as i32,
+                    event: ethereum_interfaces::sentry::peers_reply::PeerEvent::Disconnect as i32,
                 });
         if send_status_result.is_err() {
             debug!("No subscribers to report peer status to");
@@ -225,32 +216,43 @@ impl CapabilityServerImpl {
 
                         debug!("Decoded status message: {:?}", v);
 
-                        let status_data = &*(self.status_message.read());
-                        if let Some(FullStatusData { fork_filter, .. }) = status_data {
+                        let status_data = self.status_message.read();
+                        let mut valid_peers = self.valid_peers.write();
+                        if let Some(FullStatusData { fork_filter, .. }) = &*status_data {
                             fork_filter.validate(v.fork_id).map_err(|reason| {
                                 debug!("Kicking peer with incompatible fork ID: {:?}", reason);
 
                                 DisconnectReason::UselessPeer
                             })?;
 
-                            self.valid_peers.write().insert(peer);
+                            valid_peers.insert(peer);
 
-                            let _ = self
-                                .peers_status_sender
-                                .send(ethereum_interfaces::sentry::PeerEvent {
-                                peer_id: Some(ethereum_interfaces::types::H512::from(peer)),
-                                event_id:
-                                    ethereum_interfaces::sentry::peer_event::PeerEventId::Connect
-                                        as i32,
-                            });
+                            let send_status_result =
+                                self.peers_status_sender
+                                    .send(ethereum_interfaces::sentry::PeersReply {
+                                    peer_id: Some(ethereum_interfaces::types::H512::from(peer)),
+                                    event:
+                                        ethereum_interfaces::sentry::peers_reply::PeerEvent::Connect
+                                            as i32,
+                                });
+                            if send_status_result.is_err() {
+                                debug!("No subscribers to report peer status to");
+                            }
                         }
                     }
                     Some(inbound_id) if valid_peer => {
-                        let _ = self.data_sender.send(InboundMessage {
-                            id: sentry::MessageId::from(inbound_id) as i32,
-                            data,
-                            peer_id: Some(peer.into()),
-                        });
+                        if self
+                            .data_sender
+                            .send(InboundMessage {
+                                id: sentry::MessageId::from(inbound_id) as i32,
+                                data,
+                                peer_id: Some(peer.into()),
+                            })
+                            .is_err()
+                        {
+                            warn!("no connected sentry, dropping status");
+                            *self.status_message.write() = None;
+                        }
                     }
                     _ => {}
                 }

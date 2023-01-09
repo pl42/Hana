@@ -31,9 +31,7 @@ pub enum CallKind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MessageKind {
-    Create {
-        salt: Option<U256>,
-    },
+    Create,
     Call {
         call_kind: CallKind,
         code_kind: CodeKind,
@@ -67,7 +65,7 @@ pub trait Tracer: Debug + Send {
     ) {
     }
     fn capture_end(&mut self, output: &Output) {}
-    fn capture_self_destruct(&mut self, caller: Address, beneficiary: Address, balance: U256) {}
+    fn capture_self_destruct(&mut self, caller: Address, beneficiary: Address) {}
     fn capture_account_read(&mut self, account: Address) {}
     fn capture_account_write(&mut self, account: Address) {}
 }
@@ -104,7 +102,7 @@ impl Tracer for CallTracer {
         self.addresses.entry(to).or_default().to = true;
     }
 
-    fn capture_self_destruct(&mut self, caller: Address, beneficiary: Address, _: U256) {
+    fn capture_self_destruct(&mut self, caller: Address, beneficiary: Address) {
         self.addresses.entry(caller).or_default().from = true;
         self.addresses.entry(beneficiary).or_default().to = true;
     }

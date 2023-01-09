@@ -2,45 +2,13 @@ use self::difficulty::BlockDifficultyBombData;
 use super::{base::ConsensusEngineBase, *};
 use crate::{chain::protocol_param::param, h256_to_u256};
 use ::ethash::LightDAG;
-use lru::LruCache;
-use parking_lot::Mutex;
-use std::{collections::BTreeMap, sync::Arc};
+use std::collections::BTreeMap;
 
 pub mod difficulty;
-
-type Dag = LightDAG;
-
-#[derive(Debug)]
-struct DagCache {
-    inner: Mutex<LruCache<u64, Arc<Dag>>>,
-}
-
-impl DagCache {
-    fn new() -> Self {
-        Self {
-            inner: Mutex::new(LruCache::new(16)),
-        }
-    }
-
-    fn get(&self, block_number: BlockNumber) -> Arc<Dag> {
-        let epoch = block_number.0 / 30_000;
-
-        let mut dag_cache = self.inner.lock();
-
-        dag_cache.get(&epoch).cloned().unwrap_or_else(|| {
-            let dag = Arc::new(Dag::new(block_number.0.into()));
-
-            dag_cache.put(epoch, dag.clone());
-
-            dag
-        })
-    }
-}
 
 #[derive(Debug)]
 pub struct Ethash {
     base: ConsensusEngineBase,
-    dag_cache: DagCache,
     duration_limit: u64,
     block_reward: BTreeMap<BlockNumber, U256>,
     homestead_formula: Option<BlockNumber>,
@@ -63,7 +31,6 @@ impl Ethash {
     ) -> Self {
         Self {
             base: ConsensusEngineBase::new(chain_id, eip1559_block),
-            dag_cache: DagCache::new(),
             duration_limit,
             block_reward,
             homestead_formula,
@@ -82,11 +49,16 @@ impl Consensus for Ethash {
     fn validate_block_header(
         &self,
         header: &BlockHeader,
-        parent: &BlockHeader,
+        state: &mut dyn State,
         with_future_timestamp_check: bool,
     ) -> anyhow::Result<()> {
+        let parent = self
+            .base
+            .get_parent_header(state, header)?
+            .ok_or(ValidationError::UnknownParent)?;
+
         self.base
-            .validate_block_header(header, parent, with_future_timestamp_check)?;
+            .validate_block_header(header, &parent, with_future_timestamp_check)?;
 
         let parent_has_uncles = parent.ommers_hash != EMPTY_LIST_HASH;
         let difficulty = difficulty::canonical_difficulty(
@@ -107,8 +79,12 @@ impl Consensus for Ethash {
             return Err(ValidationError::WrongDifficulty.into());
         }
 
+        Ok(())
+    }
+    fn validate_seal(&self, header: &BlockHeader) -> anyhow::Result<()> {
         if !self.skip_pow_verification {
-            let light_dag = self.dag_cache.get(header.number);
+            type Dag = LightDAG;
+            let light_dag = Dag::new(header.number.0.into());
             let (mixh, final_hash) = light_dag.hashimoto(header.truncated_hash(), header.nonce);
 
             if mixh != header.mix_hash {
@@ -146,7 +122,6 @@ impl Consensus for Ethash {
             changes.push(FinalizationChange::Reward {
                 address: ommer.beneficiary,
                 amount: ommer_reward,
-                ommer: true,
             });
             miner_reward += block_reward / 32;
         }
@@ -154,7 +129,6 @@ impl Consensus for Ethash {
         changes.push(FinalizationChange::Reward {
             address: header.beneficiary,
             amount: miner_reward.into(),
-            ommer: false,
         });
 
         Ok(changes)

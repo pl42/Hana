@@ -4,7 +4,7 @@ use crate::{
     models::*,
     state::*,
 };
-use anyhow::{format_err, Context};
+use anyhow::Context;
 use std::{collections::HashMap, convert::TryFrom};
 
 #[derive(Debug)]
@@ -51,12 +51,8 @@ impl<'state> Blockchain<'state> {
     }
 
     pub fn insert_block(&mut self, block: Block, check_state_root: bool) -> anyhow::Result<()> {
-        let parent = self
-            .state
-            .read_parent_header(&block.header)?
-            .ok_or_else(|| format_err!("no parent header"))?;
         self.engine
-            .validate_block_header(&block.header, &parent, true)?;
+            .validate_block_header(&block.header, &mut self.state, true)?;
         self.engine.pre_validate_block(&block, &mut self.state)?;
 
         let hash = block.header.hash();

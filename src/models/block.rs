@@ -66,21 +66,10 @@ impl From<Block> for BlockWithSenders {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Debug, PartialEq, RlpEncodable, RlpDecodable)]
 pub struct BlockBody {
     pub transactions: Vec<MessageWithSignature>,
     pub ommers: Vec<BlockHeader>,
-}
-
-impl BlockBody {
-    #[inline]
-    pub fn transactions_root(&self) -> H256 {
-        root_hash(&self.transactions)
-    }
-    #[inline]
-    pub fn ommers_hash(&self) -> H256 {
-        Block::ommers_hash(&self.ommers)
-    }
 }
 
 impl From<Block> for BlockBody {

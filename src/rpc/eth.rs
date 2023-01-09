@@ -39,15 +39,6 @@ where
         ))
     }
 
-    async fn chain_id(&self) -> RpcResult<U64> {
-        Ok(chain::chain_config::read(&self.db.begin()?)?
-            .ok_or_else(|| format_err!("chain specification not found"))?
-            .params
-            .chain_id
-            .0
-            .into())
-    }
-
     async fn call(
         &self,
         call_data: types::MessageCall,
@@ -71,14 +62,17 @@ where
         let sender = call_data.from.unwrap_or_else(Address::zero);
         let value = call_data.value.unwrap_or_default();
 
-        let message = Message::Legacy {
-            chain_id: Some(ChainId(1)),
-            nonce: 0,
-            gas_price: Default::default(),
-            gas_limit: 0,
-            action: TransactionAction::Call(call_data.to),
-            value,
-            input,
+        let msg_with_sender = MessageWithSender {
+            message: Message::Legacy {
+                chain_id: Some(ChainId(1)),
+                nonce: 0,
+                gas_price: Default::default(),
+                gas_limit: 0,
+                action: TransactionAction::Call(call_data.to),
+                value,
+                input,
+            },
+            sender,
         };
 
         let gas = call_data
@@ -93,8 +87,7 @@ where
             &mut analysis_cache,
             &PartialHeader::from(header),
             &block_spec,
-            &message,
-            sender,
+            &msg_with_sender,
             gas,
         )?
         .output_data
@@ -111,22 +104,24 @@ where
             .ok_or_else(|| format_err!("failed to resolve block {block_number:?}"))?;
         let header = chain::header::read(&txn, hash, block_number)?
             .ok_or_else(|| format_err!("no header found for block #{block_number}/{hash}"))?;
-        let message = Message::Legacy {
-            chain_id: None,
-            nonce: 0,
-            gas_price: call_data
-                .gas_price
-                .map(|v| v.as_u64().as_u256())
-                .unwrap_or(U256::ZERO),
-            gas_limit: call_data
-                .gas
-                .map(|gas| gas.as_u64())
-                .unwrap_or(header.gas_limit),
-            action: TransactionAction::Call(call_data.to),
-            value: call_data.value.unwrap_or(U256::ZERO),
-            input: call_data.data.unwrap_or_default().into(),
+        let tx = MessageWithSender {
+            message: Message::Legacy {
+                chain_id: None,
+                nonce: 0,
+                gas_price: call_data
+                    .gas_price
+                    .map(|v| v.as_u64().as_u256())
+                    .unwrap_or(U256::ZERO),
+                gas_limit: call_data
+                    .gas
+                    .map(|gas| gas.as_u64())
+                    .unwrap_or(header.gas_limit),
+                action: TransactionAction::Call(call_data.to),
+                value: call_data.value.unwrap_or(U256::ZERO),
+                input: call_data.data.unwrap_or_default().into(),
+            },
+            sender: call_data.from.unwrap_or_else(Address::zero),
         };
-        let sender = call_data.from.unwrap_or_else(Address::zero);
         let mut db = InMemoryState::default();
         let mut state = IntraBlockState::new(&mut db);
         let mut cache = AnalysisCache::default();
@@ -144,8 +139,7 @@ where
                     &mut cache,
                     &PartialHeader::from(header),
                     &block_spec,
-                    &message,
-                    sender,
+                    &tx,
                     gas_limit,
                 )?
                 .gas_left,
@@ -188,7 +182,7 @@ where
             None,
         )?)
     }
-    async fn get_transaction_by_hash(&self, hash: H256) -> RpcResult<Option<types::Tx>> {
+    async fn get_transaction(&self, hash: H256) -> RpcResult<Option<types::Tx>> {
         let txn = self.db.begin()?;
         if let Some(block_number) = chain::tl::read(&txn, hash)? {
             let block_hash = chain::canonical_hash::read(&txn, block_number)?
@@ -399,22 +393,18 @@ where
                 &block_execution_spec,
             );
 
-            let transaction_index = chain::block_body::read_without_senders(&txn, block_hash, block_number)?.ok_or_else(|| format_err!("where's block body"))?.transactions
+            let receipts = processor.execute_block_no_post_validation()?;
+            let (transaction_index, transaction) = block_body
+                .transactions
                 .into_iter()
                 .enumerate()
-                .find(|(_, tx)| tx.hash() == hash)
-                .ok_or_else(|| format_err!("transaction {hash} not found in block #{block_number}/{block_hash} despite lookup index"))?.0;
-
-            let receipts =
-                processor.execute_block_no_post_validation_while(|i, _| i <= transaction_index)?;
-
-            let transaction = &block_body.transactions[transaction_index];
+                .find(|(_, tx)| tx.message.hash() == hash)
+                .ok_or_else(|| format_err!("transaction {hash} not found in block #{block_number}/{block_hash} despite lookup index"))?;
             let receipt = receipts.get(transaction_index).unwrap();
             let gas_used = U64::from(
                 receipt.cumulative_gas_used
-                    - transaction_index
-                        .checked_sub(1)
-                        .and_then(|last_index| receipts.get(last_index))
+                    - receipts
+                        .get(transaction_index - 1)
                         .map(|receipt| receipt.cumulative_gas_used)
                         .unwrap_or(0),
             );
@@ -425,7 +415,7 @@ where
                 .map(|(i, log)| types::TransactionLog {
                     log_index: Some(U64::from(i)),
                     transaction_index: Some(U64::from(transaction_index)),
-                    transaction_hash: Some(transaction.hash()),
+                    transaction_hash: Some(transaction.message.hash()),
                     block_hash: Some(block_hash),
                     block_number: Some(U64::from(block_number.0)),
                     address: log.address,
