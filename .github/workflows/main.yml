@@ -4,14 +4,11 @@ on:
     branches:
       - master
 
-name: Continuous integration
+name: CI
 
 jobs:
   ci:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macOS-latest]
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v2
@@ -21,7 +18,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: nightly-2022-02-17
+          toolchain: nightly-2022-04-18
           override: true
           components: rustfmt, clippy
 

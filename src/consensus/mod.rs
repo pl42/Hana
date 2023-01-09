@@ -2,7 +2,7 @@ mod base;
 mod blockchain;
 mod ethash;
 
-pub use self::{blockchain::*, ethash::*};
+pub use self::{base::*, blockchain::*, ethash::*};
 use crate::{models::*, State};
 use anyhow::bail;
 use derive_more::{Display, From};
@@ -10,7 +10,11 @@ use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
 pub enum FinalizationChange {
-    Reward { address: Address, amount: U256 },
+    Reward {
+        address: Address,
+        amount: U256,
+        ommer: bool,
+    },
 }
 
 pub trait Consensus: Debug + Send + Sync + 'static {
@@ -26,12 +30,9 @@ pub trait Consensus: Debug + Send + Sync + 'static {
     fn validate_block_header(
         &self,
         header: &BlockHeader,
-        state: &mut dyn State,
+        parent: &BlockHeader,
         with_future_timestamp_check: bool,
     ) -> anyhow::Result<()>;
-
-    /// Validates the seal of the header
-    fn validate_seal(&self, header: &BlockHeader) -> anyhow::Result<()>;
 
     /// Finalizes block execution by applying changes in the state of accounts or of the consensus itself
     ///
