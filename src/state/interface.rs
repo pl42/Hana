@@ -3,8 +3,16 @@ use auto_impl::auto_impl;
 use bytes::Bytes;
 use std::fmt::Debug;
 
-#[auto_impl(&mut, &, Box)]
-pub trait BlockState: Debug + Send + Sync {
+#[auto_impl(&mut, Box)]
+pub trait State: Debug + Send + Sync {
+    fn read_account(&self, address: Address) -> anyhow::Result<Option<Account>>;
+
+    fn read_code(&self, code_hash: H256) -> anyhow::Result<Bytes>;
+
+    fn read_storage(&self, address: Address, location: U256) -> anyhow::Result<U256>;
+
+    fn erase_storage(&mut self, address: Address) -> anyhow::Result<()>;
+
     fn read_header(
         &self,
         block_number: BlockNumber,
@@ -24,17 +32,6 @@ pub trait BlockState: Debug + Send + Sync {
         block_number: BlockNumber,
         block_hash: H256,
     ) -> anyhow::Result<Option<BlockBody>>;
-}
-
-#[auto_impl(&mut, Box)]
-pub trait State: BlockState {
-    fn read_account(&self, address: Address) -> anyhow::Result<Option<Account>>;
-
-    fn read_code(&self, code_hash: H256) -> anyhow::Result<Bytes>;
-
-    fn read_storage(&self, address: Address, location: U256) -> anyhow::Result<U256>;
-
-    fn erase_storage(&mut self, address: Address) -> anyhow::Result<()>;
 
     fn total_difficulty(
         &self,
