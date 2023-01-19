@@ -43,6 +43,7 @@ impl<'db, E> Stage<'db, E> for HeaderDownload
 where
     E: EnvironmentKind,
 {
+    #[inline]
     fn id(&self) -> crate::StageId {
         HEADERS
     }

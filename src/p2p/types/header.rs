@@ -12,7 +12,7 @@ pub struct HeaderRequest {
     pub reverse: bool,
 }
 
-impl Default for HeaderRequest {
+impl const Default for HeaderRequest {
     #[inline(always)]
     fn default() -> Self {
         HeaderRequest {

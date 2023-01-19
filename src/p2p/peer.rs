@@ -27,11 +27,13 @@ pub type SentryClient = grpc_sentry::sentry_client::SentryClient<tonic::transpor
 pub struct SentryPool(Vec<SentryClient>);
 
 impl From<SentryClient> for SentryPool {
+    #[inline]
     fn from(sentry: SentryClient) -> Self {
         Self(vec![sentry])
     }
 }
-impl From<Vec<SentryClient>> for SentryPool {
+impl const From<Vec<SentryClient>> for SentryPool {
+    #[inline]
     fn from(sentries: Vec<SentryClient>) -> Self {
         Self(sentries)
     }
@@ -47,6 +49,7 @@ pub struct Peer {
 }
 
 impl Peer {
+    #[inline]
     pub fn new<T>(conn: T, chain_config: ChainConfig, status: Status) -> Self
     where
         T: Into<SentryPool>,
@@ -67,6 +70,7 @@ impl Peer {
     }
 
     /// Returns latest ping value.
+    #[inline]
     pub fn last_ping(&self) -> BlockNumber {
         BlockNumber(self.ping_counter.load(std::sync::atomic::Ordering::SeqCst))
     }
@@ -82,6 +86,7 @@ pub type SentryInboundStream = futures::stream::Map<
 pub struct SentryStream(tonic::codec::Streaming<grpc_sentry::InboundMessage>);
 pub type InboundStream = futures::stream::SelectAll<SentryStream>;
 
+#[inline]
 async fn recv_sentry(conn: &SentryClient, ids: Vec<i32>) -> anyhow::Result<SentryStream> {
     let mut conn = conn.clone();
     conn.hand_shake(tonic::Request::new(())).await?;
@@ -96,6 +101,7 @@ async fn recv_sentry(conn: &SentryClient, ids: Vec<i32>) -> anyhow::Result<Sentr
 impl Stream for SentryStream {
     type Item = InboundMessage;
 
+    #[inline]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Poll::Ready(Some(Ok(value))) = Pin::new(&mut self.get_mut().0).poll_next(cx) {
             if let Ok(msg) = InboundMessage::try_from(value) {
@@ -143,6 +149,7 @@ pub trait PeerExt: Send + Sync {
 
 #[async_trait]
 impl PeerExt for Peer {
+    #[inline]
     async fn set_status(&self) -> anyhow::Result<()> {
         let Status {
             height,
@@ -188,6 +195,7 @@ impl PeerExt for Peer {
         Ok(())
     }
 
+    #[inline]
     async fn send_message(&self, msg: Message, predicate: PeerFilter) -> anyhow::Result<()> {
         self.send_message_raw(
             grpc_sentry::OutboundMessageData {
@@ -265,6 +273,7 @@ impl PeerExt for Peer {
         Ok(())
     }
 
+    #[inline]
     async fn send_body_request<'a>(&self, hashes: &'a [H256]) -> anyhow::Result<()> {
         self.set_status().await?;
 
@@ -315,7 +324,7 @@ impl PeerExt for Peer {
 
         Ok(())
     }
-
+    #[inline]
     async fn send_header_request(&self, request: HeaderRequest) -> anyhow::Result<()> {
         self.set_status().await?;
         self.send_message(request.into(), PeerFilter::All).await?;
@@ -323,6 +332,7 @@ impl PeerExt for Peer {
         Ok(())
     }
 
+    #[inline]
     async fn send_ping(&self) -> anyhow::Result<()> {
         let _ = self
             .send_header_request(HeaderRequest {
@@ -337,6 +347,7 @@ impl PeerExt for Peer {
 
         Ok(())
     }
+    #[inline]
     async fn recv(&self) -> anyhow::Result<InboundStream> {
         self.set_status().await?;
 
@@ -362,6 +373,7 @@ impl PeerExt for Peer {
             .filter_map(Result::ok),
         ))
     }
+    #[inline]
     async fn recv_headers(&self) -> anyhow::Result<InboundStream> {
         self.set_status().await?;
 
@@ -382,6 +394,7 @@ impl PeerExt for Peer {
             .filter_map(Result::ok),
         ))
     }
+    #[inline]
     async fn recv_bodies(&self) -> anyhow::Result<InboundStream> {
         self.set_status().await?;
 
@@ -402,15 +415,19 @@ impl PeerExt for Peer {
             .filter_map(Result::ok),
         ))
     }
+    #[inline]
     async fn broadcast_block(&self, _: Block, _: u128) -> anyhow::Result<()> {
         todo!();
     }
+    #[inline]
     async fn broadcast_new_block_hashes(&self, _: Vec<(H256, BlockNumber)>) -> anyhow::Result<()> {
         todo!();
     }
+    #[inline]
     async fn propagate_transactions(&self, _: Vec<H256>) -> anyhow::Result<()> {
         todo!()
     }
+    #[inline]
     async fn update_head(
         &self,
         height: BlockNumber,
@@ -426,6 +443,7 @@ impl PeerExt for Peer {
         self.set_status().await?;
         Ok(())
     }
+    #[inline]
     async fn penalize_peer(&self, penalty: Penalty) -> anyhow::Result<()> {
         let _ = self
             .conn
@@ -450,6 +468,7 @@ impl PeerExt for Peer {
 
         Ok(())
     }
+    #[inline]
     async fn peer_count(&self) -> anyhow::Result<u64> {
         todo!()
     }
