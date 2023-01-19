@@ -43,7 +43,6 @@ impl<'db, E> Stage<'db, E> for HeaderDownload
 where
     E: EnvironmentKind,
 {
-    #[inline]
     fn id(&self) -> crate::StageId {
         HEADERS
     }
@@ -52,7 +51,7 @@ where
         &mut self,
         txn: &'tx mut MdbxTransaction<'db, RW, E>,
         input: StageInput,
-    ) -> anyhow::Result<ExecOutput>
+    ) -> Result<ExecOutput, StageError>
     where
         'db: 'tx,
     {
