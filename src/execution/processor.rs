@@ -36,7 +36,7 @@ fn refund_gas<'r, S>(
     message: &Message,
     sender: Address,
     mut gas_left: u64,
-) -> Result<u64, DuoError>
+) -> anyhow::Result<u64>
 where
     S: State,
 {
@@ -54,9 +54,7 @@ where
     gas_left += refund;
 
     let base_fee_per_gas = header.base_fee_per_gas.unwrap_or(U256::ZERO);
-    let effective_gas_price = message
-        .effective_gas_price(base_fee_per_gas)
-        .ok_or(ValidationError::MaxFeeLessThanBase)?;
+    let effective_gas_price = message.effective_gas_price(base_fee_per_gas);
     state.add_to_balance(sender, U256::from(gas_left) * effective_gas_price)?;
 
     Ok(gas_left)
@@ -82,9 +80,7 @@ where
     state.access_account(sender);
 
     let base_fee_per_gas = header.base_fee_per_gas.unwrap_or(U256::ZERO);
-    let effective_gas_price = message
-        .effective_gas_price(base_fee_per_gas)
-        .ok_or(ValidationError::MaxFeeLessThanBase)?;
+    let effective_gas_price = message.effective_gas_price(base_fee_per_gas);
     state.subtract_from_balance(
         sender,
         U256::from(message.gas_limit()) * effective_gas_price,
@@ -138,9 +134,7 @@ where
         )?;
 
     // award the miner
-    let priority_fee_per_gas = message
-        .priority_fee_per_gas(base_fee_per_gas)
-        .ok_or(ValidationError::MaxFeeLessThanBase)?;
+    let priority_fee_per_gas = message.priority_fee_per_gas(base_fee_per_gas);
     state.add_to_balance(
         header.beneficiary,
         U256::from(gas_used) * priority_fee_per_gas,
