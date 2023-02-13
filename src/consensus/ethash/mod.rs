@@ -1,13 +1,12 @@
 use self::difficulty::BlockDifficultyBombData;
 use super::{base::ConsensusEngineBase, *};
-use crate::{h256_to_u256, BlockReader};
+use crate::{chain::protocol_param::param, h256_to_u256};
 use ::ethash::LightDAG;
 use lru::LruCache;
 use parking_lot::Mutex;
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 pub mod difficulty;
-pub mod fork_choice_graph;
 
 type Dag = LightDAG;
 
@@ -41,15 +40,13 @@ impl DagCache {
 #[derive(Debug)]
 pub struct Ethash {
     base: ConsensusEngineBase,
+    dag_cache: DagCache,
     duration_limit: u64,
-    block_reward: BlockRewardSchedule,
+    block_reward: BTreeMap<BlockNumber, U256>,
     homestead_formula: Option<BlockNumber>,
     byzantium_formula: Option<BlockNumber>,
     difficulty_bomb: Option<DifficultyBomb>,
     skip_pow_verification: bool,
-
-    dag_cache: DagCache,
-    fork_choice_graph: Arc<Mutex<ForkChoiceGraph>>,
 }
 
 impl Ethash {
@@ -58,7 +55,7 @@ impl Ethash {
         chain_id: ChainId,
         eip1559_block: Option<BlockNumber>,
         duration_limit: u64,
-        block_reward: BlockRewardSchedule,
+        block_reward: BTreeMap<BlockNumber, U256>,
         homestead_formula: Option<BlockNumber>,
         byzantium_formula: Option<BlockNumber>,
         difficulty_bomb: Option<DifficultyBomb>,
@@ -66,81 +63,20 @@ impl Ethash {
     ) -> Self {
         Self {
             base: ConsensusEngineBase::new(chain_id, eip1559_block),
+            dag_cache: DagCache::new(),
             duration_limit,
             block_reward,
             homestead_formula,
             byzantium_formula,
             difficulty_bomb,
             skip_pow_verification,
-
-            dag_cache: DagCache::new(),
-            fork_choice_graph: Arc::new(Mutex::new(ForkChoiceGraph::new())),
         }
     }
 }
 
 impl Consensus for Ethash {
-    fn fork_choice_mode(&self) -> ForkChoiceMode {
-        ForkChoiceMode::Difficulty(self.fork_choice_graph.clone())
-    }
-
-    fn pre_validate_block(&self, block: &Block, state: &dyn BlockReader) -> Result<(), DuoError> {
-        self.base.pre_validate_block(block)?;
-
-        if block.ommers.len() > 2 {
-            return Err(ValidationError::TooManyOmmers.into());
-        }
-
-        if block.ommers.len() == 2 && block.ommers[0] == block.ommers[1] {
-            return Err(ValidationError::DuplicateOmmer.into());
-        }
-
-        let parent =
-            state
-                .read_parent_header(&block.header)?
-                .ok_or(ValidationError::UnknownParent {
-                    number: block.header.number,
-                    parent_hash: block.header.parent_hash,
-                })?;
-
-        for ommer in &block.ommers {
-            let ommer_parent =
-                state
-                    .read_parent_header(ommer)?
-                    .ok_or(ValidationError::OmmerUnknownParent {
-                        number: ommer.number,
-                        parent_hash: ommer.parent_hash,
-                    })?;
-
-            self.base
-                .validate_block_header(ommer, &ommer_parent, false)
-                .map_err(|e| match e {
-                    DuoError::Internal(e) => DuoError::Internal(e),
-                    DuoError::Validation(e) => {
-                        DuoError::Validation(ValidationError::InvalidOmmerHeader {
-                            inner: Box::new(e),
-                        })
-                    }
-                })?;
-            let mut old_ommers = vec![];
-            if !self.base.is_kin(
-                ommer,
-                &parent,
-                block.header.parent_hash,
-                6,
-                state,
-                &mut old_ommers,
-            )? {
-                return Err(ValidationError::NotAnOmmer.into());
-            }
-            for oo in old_ommers {
-                if oo == *ommer {
-                    return Err(ValidationError::DuplicateOmmer.into());
-                }
-            }
-        }
-
-        Ok(())
+    fn pre_validate_block(&self, block: &Block, state: &dyn BlockState) -> Result<(), DuoError> {
+        self.base.pre_validate_block(block, state)
     }
 
     fn validate_block_header(
@@ -189,11 +125,20 @@ impl Consensus for Ethash {
         &self,
         header: &PartialHeader,
         ommers: &[BlockHeader],
+        revision: Revision,
     ) -> anyhow::Result<Vec<FinalizationChange>> {
         let mut changes = Vec::with_capacity(1 + ommers.len());
+        let block_reward = {
+            if revision >= Revision::Constantinople {
+                param::BLOCK_REWARD_CONSTANTINOPLE
+            } else if revision >= Revision::Byzantium {
+                param::BLOCK_REWARD_BYZANTIUM
+            } else {
+                param::BLOCK_REWARD_FRONTIER
+            }
+        };
 
         let block_number = header.number;
-        let block_reward = self.block_reward.for_block(block_number);
         let mut miner_reward = block_reward;
         for ommer in ommers {
             let ommer_reward =
@@ -208,7 +153,7 @@ impl Consensus for Ethash {
 
         changes.push(FinalizationChange::Reward {
             address: header.beneficiary,
-            amount: miner_reward,
+            amount: miner_reward.into(),
             ommer: false,
         });
 

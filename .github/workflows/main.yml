@@ -11,13 +11,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
-
-      - run: sudo apt-get install -y libext2fs-dev
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
 
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
+          toolchain: nightly-2022-05-15
+          override: true
           components: rustfmt, clippy
 
       - uses: actions-rs/cargo@v1
@@ -25,11 +27,10 @@ jobs:
           command: fmt
           args: --all -- --check
 
-      - uses: actions-rs/install@v0.1
+      - uses: actions-rs/cargo@v1
         with:
-          crate: cargo-hack
-          version: latest
-          use-tool-cache: true
+          command: install
+          args: cargo-hack
 
       - uses: actions-rs/cargo@v1
         with:
@@ -45,10 +46,10 @@ jobs:
         with:
           command: test
 
-      - uses: actions-rs/clippy-check@v1
+      - uses: actions-rs/cargo@v1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features
+          command: clippy
+          args: --workspace --all-targets -- -D warnings
 
       - uses: actions/checkout@v2
         with:

@@ -25,7 +25,7 @@ pub struct PruningInput {
     pub prune_to: BlockNumber,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum ExecOutput {
     Unwind {
         unwind_to: BlockNumber,
@@ -37,7 +37,7 @@ pub enum ExecOutput {
     },
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct UnwindOutput {
     pub stage_progress: BlockNumber,
 }

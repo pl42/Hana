@@ -1,7 +1,7 @@
 use hana::{
     hana_tracing::{self, Component},
     binutil::HanaDataDir,
-    consensus::{engine_factory, Consensus, ForkChoiceMode},
+    consensus::{engine_factory, Consensus},
     models::*,
     p2p::node::NodeBuilder,
     rpc::{
@@ -66,7 +66,7 @@ pub struct Opt {
 
     /// Use incremental staged sync.
     #[clap(long)]
-    pub increment: Option<BlockNumber>,
+    pub increment: Option<u64>,
 
     /// Sender recovery batch size (blocks)
     #[clap(long, default_value = "500000")]
@@ -123,10 +123,8 @@ fn main() -> anyhow::Result<()> {
             rt.block_on(async move {
                 info!("Starting Hana ({})", version_string());
 
-                let mut bundled_chain_spec = false;
                 let chain_config = if let Some(chain) = opt.chain {
                     let chain_config = ChainConfig::new(&chain)?;
-                    bundled_chain_spec = true;
                     Some(chain_config.chain_spec)
                 } else if let Some(chain_path) = opt.chain_spec_file {
                     Some(ron::de::from_reader(File::open(chain_path)?)?)
@@ -148,12 +146,8 @@ fn main() -> anyhow::Result<()> {
                     let span = span!(Level::INFO, "", " Genesis initialization ");
                     let _g = span.enter();
                     let txn = db.begin_mutable()?;
-                    let (chainspec, initialized) = hana::genesis::initialize_genesis(
-                        &txn,
-                        &*etl_temp_dir,
-                        bundled_chain_spec,
-                        chain_config,
-                    )?;
+                    let (chainspec, initialized) =
+                        hana::genesis::initialize_genesis(&txn, &*etl_temp_dir, chain_config)?;
                     if initialized {
                         txn.commit()?;
                     }
@@ -161,8 +155,7 @@ fn main() -> anyhow::Result<()> {
                     chainspec
                 };
 
-                let consensus: Arc<dyn Consensus> =
-                    engine_factory(Some(db.clone()), chainspec.clone())?.into();
+                let consensus: Arc<dyn Consensus> = engine_factory(chainspec.clone())?.into();
 
                 let chain_config = ChainConfig::from(chainspec);
 
@@ -194,14 +187,6 @@ fn main() -> anyhow::Result<()> {
                         pending::<()>().await
                     });
                 }
-
-                let increment = opt.increment.or({
-                    if opt.prune {
-                        Some(BlockNumber(90_000))
-                    } else {
-                        None
-                    }
-                });
 
                 // staged sync setup
                 let mut staged_sync = stagedsync::StagedSync::new();
@@ -262,13 +247,10 @@ fn main() -> anyhow::Result<()> {
                 }
 
                 let node = Arc::new(builder.build()?);
-                let tip_discovery =
-                    !matches!(consensus.fork_choice_mode(), ForkChoiceMode::External(_));
-
                 tokio::spawn({
                     let node = node.clone();
                     async move {
-                        node.start_sync(tip_discovery).await.unwrap();
+                        node.start_sync().await.unwrap();
                     }
                 });
 
@@ -276,8 +258,9 @@ fn main() -> anyhow::Result<()> {
                     HeaderDownload {
                         node: node.clone(),
                         consensus: consensus.clone(),
+                        requests: Default::default(),
                         max_block: opt.max_block.unwrap_or_else(|| u64::MAX.into()),
-                        increment,
+                        graph: Default::default(),
                     },
                     false,
                 );

@@ -93,31 +93,31 @@ impl From<MessageId> for grpc_sentry::MessageId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, RlpEncodableWrapper, RlpDecodableWrapper)]
+#[derive(Debug, Clone, PartialEq, RlpEncodableWrapper, RlpDecodableWrapper)]
 pub struct NewPooledTransactionHashes(pub Vec<H256>);
 
-#[derive(Debug, Clone, PartialEq, Eq, RlpEncodableWrapper, RlpDecodableWrapper)]
+#[derive(Debug, Clone, Eq, PartialEq, RlpEncodableWrapper, RlpDecodableWrapper)]
 pub struct Transactions(pub Vec<MessageWithSignature>);
 
-#[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, RlpEncodable, RlpDecodable)]
 pub struct GetPooledTransactions {
     pub request_id: u64,
     pub hashes: Vec<H256>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, RlpEncodable, RlpDecodable)]
 pub struct PooledTransactions {
     pub request_id: u64,
     pub transactions: Vec<MessageWithSignature>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[derive(Debug, Clone, PartialEq, RlpEncodable, RlpDecodable)]
 pub struct BlockBodies {
     pub request_id: u64,
     pub bodies: Vec<BlockBody>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Message {
     NewBlockHashes(NewBlockHashes),
     GetBlockHeaders(GetBlockHeaders),
@@ -174,16 +174,17 @@ impl From<Vec<H256>> for Message {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InboundMessage {
     pub msg: Message,
     pub peer_id: PeerId,
-    pub sentry_id: usize,
 }
 
-impl InboundMessage {
-    #[inline]
-    pub fn new(value: grpc_sentry::InboundMessage, sentry_id: usize) -> anyhow::Result<Self> {
+impl TryFrom<grpc_sentry::InboundMessage> for InboundMessage {
+    type Error = anyhow::Error;
+
+    #[inline(always)]
+    fn try_from(value: grpc_sentry::InboundMessage) -> Result<Self, Self::Error> {
         let msg_data_slice = &mut &*value.data;
         let msg = match MessageId::try_from(match grpc_sentry::MessageId::from_i32(value.id) {
             Some(msg_id) => msg_id,
@@ -220,7 +221,6 @@ impl InboundMessage {
         Ok(InboundMessage {
             msg,
             peer_id: value.peer_id.unwrap_or_default().into(),
-            sentry_id,
         })
     }
 }

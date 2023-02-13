@@ -14,11 +14,7 @@ impl SentryStream {
     const BACKOFF: Duration = Duration::from_millis(100);
 
     #[allow(clippy::new_ret_no_self)]
-    pub async fn new(
-        sentry: &Sentry,
-        sentry_id: usize,
-        pred: Vec<i32>,
-    ) -> anyhow::Result<NodeStream> {
+    pub async fn new(sentry: &Sentry, pred: Vec<i32>) -> anyhow::Result<NodeStream> {
         let (penalize_tx, mut penalize_rx) = mpsc::channel(4);
         tokio::task::spawn({
             let mut sentry = sentry.clone();
@@ -46,7 +42,7 @@ impl SentryStream {
                     if let Some(Ok(msg)) = inner_stream.next().await {
                         let peer_id = msg.peer_id.clone();
 
-                        if let Ok(msg) = InboundMessage::new(msg, sentry_id) {
+                        if let Ok(msg) = InboundMessage::try_from(msg) {
                             yield msg;
                         } else {
                             let _ = penalize_tx.send(peer_id).await;
@@ -59,9 +55,9 @@ impl SentryStream {
         Ok::<_, anyhow::Error>(stream)
     }
 
-    pub async fn join_all<'sentry, T, P>(iter: T, pred: P) -> NodeStream
+    pub async fn join_all<'a, T, P>(iter: T, pred: P) -> NodeStream
     where
-        T: IntoIterator<Item = &'sentry Sentry>,
+        T: IntoIterator<Item = &'a Sentry>,
         P: IntoIterator<Item = i32>,
     {
         let pred = pred.into_iter().collect::<Vec<_>>();
@@ -69,8 +65,7 @@ impl SentryStream {
         Box::pin(futures::stream::select_all(
             futures::future::join_all(
                 iter.into_iter()
-                    .enumerate()
-                    .map(|(sentry_id, sentry)| Self::new(sentry, sentry_id, pred.clone()))
+                    .map(|sentry| Self::new(sentry, pred.clone()))
                     .collect::<Vec<_>>(),
             )
             .await

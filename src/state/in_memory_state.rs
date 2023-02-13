@@ -3,7 +3,7 @@ use crate::{
     models::*,
     trie::{unpack_nibbles, HashBuilder},
     util::*,
-    BlockReader, HeaderReader, StateReader, StateWriter,
+    BlockState, State,
 };
 use bytes::{Bytes, BytesMut};
 use std::{collections::*, convert::TryInto};
@@ -205,18 +205,6 @@ impl InMemoryState {
         Ok(None)
     }
 
-    pub fn total_difficulty(
-        &self,
-        block_number: BlockNumber,
-        block_hash: H256,
-    ) -> anyhow::Result<Option<U256>> {
-        if let Some(difficulty_map) = self.difficulty.get(block_number.0 as usize) {
-            return Ok(difficulty_map.get(&block_hash).cloned());
-        }
-
-        Ok(None)
-    }
-
     pub fn canonize_block(&mut self, block_number: BlockNumber, block_hash: H256) {
         let block_number = block_number.0 as usize;
 
@@ -262,7 +250,7 @@ impl InMemoryState {
     }
 }
 
-impl HeaderReader for InMemoryState {
+impl BlockState for InMemoryState {
     fn read_header(
         &self,
         block_number: BlockNumber,
@@ -274,9 +262,7 @@ impl HeaderReader for InMemoryState {
 
         Ok(None)
     }
-}
 
-impl BlockReader for InMemoryState {
     fn read_body(
         &self,
         block_number: BlockNumber,
@@ -290,7 +276,7 @@ impl BlockReader for InMemoryState {
     }
 }
 
-impl StateReader for InMemoryState {
+impl State for InMemoryState {
     // Readers
 
     fn read_account(&self, address: Address) -> anyhow::Result<Option<Account>> {
@@ -310,9 +296,7 @@ impl StateReader for InMemoryState {
 
         Ok(U256::ZERO)
     }
-}
 
-impl StateWriter for InMemoryState {
     fn erase_storage(&mut self, address: Address) -> anyhow::Result<()> {
         let address_storage = self.storage.remove(&address).unwrap_or_default();
 
@@ -330,6 +314,18 @@ impl StateWriter for InMemoryState {
         }
 
         Ok(())
+    }
+
+    fn total_difficulty(
+        &self,
+        block_number: BlockNumber,
+        block_hash: H256,
+    ) -> anyhow::Result<Option<U256>> {
+        if let Some(difficulty_map) = self.difficulty.get(block_number.0 as usize) {
+            return Ok(difficulty_map.get(&block_hash).cloned());
+        }
+
+        Ok(None)
     }
 
     /// State changes

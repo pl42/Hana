@@ -1,23 +1,12 @@
 mod base;
-mod beacon;
 mod blockchain;
 mod ethash;
 
-use self::fork_choice_graph::ForkChoiceGraph;
-pub use self::{base::*, beacon::*, blockchain::*, ethash::*};
-use crate::{
-    kv::{mdbx::*, MdbxWithDirHandle},
-    models::*,
-    BlockReader,
-};
+pub use self::{base::*, blockchain::*, ethash::*};
+use crate::{models::*, BlockState};
 use anyhow::bail;
 use derive_more::{Display, From};
-use parking_lot::Mutex;
-use std::{
-    fmt::{Debug, Display},
-    sync::Arc,
-};
-use tokio::sync::watch;
+use std::fmt::{Debug, Display};
 
 #[derive(Debug)]
 pub enum FinalizationChange {
@@ -28,25 +17,12 @@ pub enum FinalizationChange {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ExternalForkChoice {
-    pub head_block: H256,
-    pub finalized_block: H256,
-}
-
-pub enum ForkChoiceMode {
-    External(watch::Receiver<ExternalForkChoice>),
-    Difficulty(Arc<Mutex<ForkChoiceGraph>>),
-}
-
 pub trait Consensus: Debug + Send + Sync + 'static {
-    fn fork_choice_mode(&self) -> ForkChoiceMode;
-
     /// Performs validation of block header & body that can be done prior to sender recovery and execution.
     /// See YP Sections 4.3.2 "Holistic Validity", 4.3.4 "Block Header Validity", and 11.1 "Ommer Validation".
     ///
     /// NOTE: Shouldn't be used for genesis block.
-    fn pre_validate_block(&self, block: &Block, state: &dyn BlockReader) -> Result<(), DuoError>;
+    fn pre_validate_block(&self, block: &Block, state: &dyn BlockState) -> Result<(), DuoError>;
 
     /// See YP Section 4.3.4 "Block Header Validity".
     ///
@@ -63,8 +39,9 @@ pub trait Consensus: Debug + Send + Sync + 'static {
     /// NOTE: For Ethash See YP Section 11.3 "Reward Application".
     fn finalize(
         &self,
-        header: &PartialHeader,
+        block: &PartialHeader,
         ommers: &[BlockHeader],
+        revision: Revision,
     ) -> anyhow::Result<Vec<FinalizationChange>>;
 
     /// See YP Section 11.3 "Reward Application".
@@ -74,7 +51,7 @@ pub trait Consensus: Debug + Send + Sync + 'static {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum BadTransactionError {
     SenderNoEOA {
         sender: Address,
@@ -96,7 +73,7 @@ pub enum BadTransactionError {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ValidationError {
     FutureBlock {
         now: u64,
@@ -112,10 +89,6 @@ pub enum ValidationError {
         expected: H256,
         got: H256,
     }, // wrong Ho
-    WrongHeaderNonce {
-        expected: H64,
-        got: H64,
-    },
     WrongTransactionsRoot {
         expected: H256,
         got: H256,
@@ -167,12 +140,10 @@ pub enum ValidationError {
         number: BlockNumber,
         parent_hash: H256,
     }, // P(H) = ∅ ∨ Hi ≠ P(H)Hi + 1
-    TooManyOmmers, // ‖BU‖ > 2
-    InvalidOmmerHeader {
-        inner: Box<ValidationError>,
-    }, // ¬V(U)
-    NotAnOmmer,    // ¬k(U, P(BH)H, 6)
-    DuplicateOmmer, // not well covered by the YP actually
+    TooManyOmmers,      // ‖BU‖ > 2
+    InvalidOmmerHeader, // ¬V(U)
+    NotAnOmmer,         // ¬k(U, P(BH)H, 6)
+    DuplicateOmmer,     // not well covered by the YP actually
 
     // See [YP] Section 11.2 "Transaction Validation", Eq (160)
     WrongBlockGas {
@@ -228,41 +199,24 @@ pub fn pre_validate_transaction(
     Ok(())
 }
 
-pub fn engine_factory(
-    db: Option<Arc<MdbxWithDirHandle<WriteMap>>>,
-    chain_config: ChainSpec,
-) -> anyhow::Result<Box<dyn Consensus>> {
+pub fn engine_factory(chain_config: ChainSpec) -> anyhow::Result<Box<dyn Consensus>> {
     Ok(match chain_config.consensus.seal_verification {
         SealVerificationParams::Ethash {
             duration_limit,
+            block_reward,
             homestead_formula,
             byzantium_formula,
             difficulty_bomb,
             skip_pow_verification,
-            block_reward,
         } => Box::new(Ethash::new(
             chain_config.params.chain_id,
             chain_config.consensus.eip1559_block,
             duration_limit,
-            BlockRewardSchedule(block_reward),
+            block_reward,
             homestead_formula,
             byzantium_formula,
             difficulty_bomb,
             skip_pow_verification,
-        )),
-        SealVerificationParams::Beacon {
-            terminal_total_difficulty,
-            terminal_block_hash,
-            terminal_block_number,
-            block_reward,
-        } => Box::new(BeaconConsensus::new(
-            db,
-            chain_config.params.chain_id,
-            chain_config.consensus.eip1559_block,
-            BlockRewardSchedule(block_reward),
-            terminal_total_difficulty,
-            terminal_block_hash,
-            terminal_block_number,
         )),
         _ => bail!("unsupported consensus engine"),
     })
