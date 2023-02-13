@@ -2,7 +2,7 @@ use crate::kv::{traits::*, *};
 use ::mdbx::{DatabaseFlags, WriteFlags};
 pub use ::mdbx::{EnvironmentKind, Geometry, NoWriteMap, TransactionKind, WriteMap, RO, RW};
 use anyhow::Context;
-use std::{collections::HashMap, marker::PhantomData, ops::Deref, path::Path};
+use std::{collections::HashMap, fs::DirBuilder, marker::PhantomData, ops::Deref, path::Path};
 use tables::*;
 
 #[derive(Clone, Debug)]
@@ -69,6 +69,13 @@ impl<E: EnvironmentKind> MdbxEnvironment<E> {
         path: &Path,
         chart: DatabaseChart,
     ) -> anyhow::Result<Self> {
+        if DirBuilder::new().recursive(true).create(path).is_ok() {
+            #[cfg(target_os = "linux")]
+            if let Err(e) = e2p_fileflags::FileFlags::set_flags(path, e2p_fileflags::Flags::NOCOW) {
+                tracing::debug!("Failed to set nocow attribute at {path:?}: {e}");
+            }
+        }
+
         let s = Self::open(b, path, chart.clone(), false)?;
 
         let tx = s.inner.begin_rw_txn()?;
