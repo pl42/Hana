@@ -6,10 +6,10 @@ use crate::{
     },
     models::*,
     state::database::*,
-    u256_to_h256, BlockState, State,
+    u256_to_h256, BlockReader, HeaderReader, StateReader, StateWriter,
 };
 use bytes::Bytes;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use tokio::pin;
 use tracing::*;
 
@@ -49,7 +49,6 @@ where
 
     // Current block stuff
     block_number: BlockNumber,
-    changed_storage: HashSet<Address>,
 }
 
 impl<'db, 'tx, K, E> Buffer<'db, 'tx, K, E>
@@ -72,7 +71,6 @@ where
             hash_to_code: Default::default(),
             logs: Default::default(),
             block_number: Default::default(),
-            changed_storage: Default::default(),
         }
     }
 
@@ -84,7 +82,7 @@ where
     }
 }
 
-impl<'db, 'tx, K, E> BlockState for MdbxTransaction<'db, K, E>
+impl<'db, 'tx, K, E> HeaderReader for MdbxTransaction<'db, K, E>
 where
     'db: 'tx,
     K: TransactionKind,
@@ -97,7 +95,14 @@ where
     ) -> anyhow::Result<Option<BlockHeader>> {
         self.get(tables::Header, (block_number, block_hash))
     }
+}
 
+impl<'db, 'tx, K, E> BlockReader for MdbxTransaction<'db, K, E>
+where
+    'db: 'tx,
+    K: TransactionKind,
+    E: EnvironmentKind,
+{
     fn read_body(
         &self,
         block_number: BlockNumber,
@@ -107,7 +112,7 @@ where
     }
 }
 
-impl<'db, 'tx, K, E> BlockState for Buffer<'db, 'tx, K, E>
+impl<'db, 'tx, K, E> HeaderReader for Buffer<'db, 'tx, K, E>
 where
     'db: 'tx,
     K: TransactionKind,
@@ -120,17 +125,9 @@ where
     ) -> anyhow::Result<Option<BlockHeader>> {
         self.txn.read_header(block_number, block_hash)
     }
-
-    fn read_body(
-        &self,
-        block_number: BlockNumber,
-        block_hash: H256,
-    ) -> anyhow::Result<Option<BlockBody>> {
-        self.txn.read_body(block_number, block_hash)
-    }
 }
 
-impl<'db, 'tx, K, E> State for Buffer<'db, 'tx, K, E>
+impl<'db, 'tx, K, E> StateReader for Buffer<'db, 'tx, K, E>
 where
     'db: 'tx,
     K: TransactionKind,
@@ -167,7 +164,14 @@ where
 
         accessors::state::storage::read(self.txn, address, location, self.historical_block)
     }
+}
 
+impl<'db, 'tx, K, E> StateWriter for Buffer<'db, 'tx, K, E>
+where
+    'db: 'tx,
+    K: TransactionKind,
+    E: EnvironmentKind,
+{
     fn erase_storage(&mut self, address: Address) -> anyhow::Result<()> {
         let mut mark_database_as_discarded = false;
         let overlay_storage = self.storage.entry(address).or_insert_with(|| {
@@ -221,14 +225,6 @@ where
         Ok(())
     }
 
-    fn total_difficulty(
-        &self,
-        block_number: BlockNumber,
-        block_hash: H256,
-    ) -> anyhow::Result<Option<U256>> {
-        accessors::chain::td::read(self.txn, block_hash, block_number)
-    }
-
     /// State changes
     /// Change sets are backward changes of the state, i.e. account/storage values _at the beginning of a block_.
 
@@ -236,7 +232,6 @@ where
     /// Must be called prior to calling update_account/update_account_code/update_storage.
     fn begin_block(&mut self, block_number: BlockNumber) {
         self.block_number = block_number;
-        self.changed_storage.clear();
     }
 
     fn update_account(
@@ -245,23 +240,14 @@ where
         initial: Option<Account>,
         current: Option<Account>,
     ) {
-        let equal = current == initial;
-        let account_deleted = current.is_none();
+        if initial != current {
+            self.account_changes
+                .entry(self.block_number)
+                .or_default()
+                .insert(address, initial);
 
-        if equal && !account_deleted && !self.changed_storage.contains(&address) {
-            return;
+            self.accounts.insert(address, current);
         }
-
-        self.account_changes
-            .entry(self.block_number)
-            .or_default()
-            .insert(address, initial);
-
-        if equal {
-            return;
-        }
-
-        self.accounts.insert(address, current);
     }
 
     fn update_code(&mut self, code_hash: H256, code: Bytes) -> anyhow::Result<()> {
@@ -277,23 +263,20 @@ where
         initial: U256,
         current: U256,
     ) -> anyhow::Result<()> {
-        if current == initial {
-            return Ok(());
+        if initial != current {
+            self.storage_changes
+                .entry(self.block_number)
+                .or_default()
+                .entry(address)
+                .or_default()
+                .insert(location, initial);
+
+            self.storage
+                .entry(address)
+                .or_default()
+                .slots
+                .insert(location, current);
         }
-
-        self.changed_storage.insert(address);
-        self.storage_changes
-            .entry(self.block_number)
-            .or_default()
-            .entry(address)
-            .or_default()
-            .insert(location, initial);
-
-        self.storage
-            .entry(address)
-            .or_default()
-            .slots
-            .insert(location, current);
 
         Ok(())
     }
