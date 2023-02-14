@@ -197,9 +197,7 @@ where
         .ok_or_else(|| format_err!("Index generation cannot be the first stage"))?
         .1;
 
-    let walker = tx
-        .cursor(data_table)?
-        .walk(input.stage_progress.map(|x| x + 1));
+    let walker = tx.cursor(data_table)?.walk(Some(starting_block + 1));
     pin!(walker);
 
     let mut keys = HashMap::<IndexKey, croaring::Treemap>::new();

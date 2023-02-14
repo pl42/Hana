@@ -7,54 +7,46 @@ use crate::{
 };
 use bytes::{BufMut, BytesMut};
 use dashmap::DashSet;
-use ethereum_interfaces::{
-    sentry as grpc_sentry,
-    sentry::{sentry_client::SentryClient, PeerMinBlockRequest, SentPeers},
-};
-use ethereum_types::H512;
+use ethereum_interfaces::{sentry as grpc_sentry, sentry::sentry_client::SentryClient};
 use fastrlp::*;
 use futures::stream::FuturesUnordered;
 use hashlink::LruCache;
 use parking_lot::{Mutex, RwLock};
 use rand::{thread_rng, Rng};
-use std::{
-    collections::HashSet,
-    future::{pending, Future},
-    sync::Arc,
-    time::Duration,
-};
+use std::{future::pending, sync::Arc, time::Duration};
 use task_group::TaskGroup;
-use tokio::sync::{watch, Notify};
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
 use tracing::*;
 
 pub type Sentry = SentryClient<Channel>;
-pub type SentryId = usize;
-
-pub type PeerId = H512;
-
 pub type RequestId = u64;
 
 #[derive(Debug)]
+pub(crate) struct BlockCaches {
+    /// Mapping from the child hash to it's parent.
+    pub(crate) parent_cache: LruCache<H256, H256>,
+    /// Mapping from the block hash to it's number.
+    pub(crate) block_cache: LruCache<H256, BlockNumber>,
+}
+
+#[derive(Debug)]
 pub struct Node {
-    pub stash: Arc<dyn Stash>,
+    pub(crate) stash: Arc<dyn Stash>,
     /// The sentry clients.
-    pub sentries: Vec<Sentry>,
+    pub(crate) sentries: Vec<Sentry>,
     /// The current Node status message.
-    pub status: RwLock<Status>,
+    pub(crate) status: RwLock<Status>,
     /// Node chain config.
-    pub config: ChainConfig,
+    pub(crate) config: ChainConfig,
     /// Highest persistent chain tip.
-    pub chain_tip: watch::Receiver<(BlockNumber, H256)>,
-    pub chain_tip_sender: watch::Sender<(BlockNumber, H256)>,
-    /// Block cache
-    pub block_cache: Mutex<LruCache<H256, (SentryId, PeerId, crate::models::Block)>>,
-    pub block_cache_notify: Notify,
+    pub(crate) chain_tip: RwLock<(BlockNumber, H256)>,
+    /// Block caches
+    pub(crate) block_caches: Mutex<BlockCaches>,
     /// Table of block hashes of the blocks known to not belong to the canonical chain.
-    pub bad_blocks: DashSet<H256>,
+    pub(crate) bad_blocks: DashSet<H256>,
     /// Chain forks.
-    pub forks: Vec<u64>,
+    pub(crate) forks: Vec<u64>,
 }
 
 impl Node {
@@ -68,13 +60,14 @@ impl Node {
     const SYNC_INTERVAL: Duration = Duration::from_secs(5);
 
     /// Start node synchronization.
-    pub async fn start_sync(self: Arc<Self>, tip_discovery: bool) -> anyhow::Result<()> {
+    pub async fn start_sync(self: Arc<Self>) -> anyhow::Result<()> {
         let tasks = TaskGroup::new();
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+
         let requested = Arc::new(Mutex::new(LruCache::new(128)));
 
-        tasks.spawn({
+        let _ = tasks.spawn({
             let handler = self.clone();
             let requested = requested.clone();
 
@@ -82,80 +75,66 @@ impl Node {
                 let mut stream = handler.sync_stream().await;
                 loop {
                     if let Some(msg) = stream.next().await {
+                        let (block_number, _) = *handler.chain_tip.read();
                         let peer_id = msg.peer_id;
-                        let sentry_id = msg.sentry_id;
 
                         match msg.msg {
                             Message::NewBlockHashes(ref blocks) => {
-                                let mut max_block = None;
                                 for b in &blocks.0 {
-                                    if tip_discovery && b.number > handler.chain_tip.borrow().0 {
+                                    if b.number > block_number {
                                         let id = thread_rng().gen::<u64>();
-                                        tx.send((
-                                            id,
-                                            PeerFilter::Peer(peer_id, sentry_id),
-                                            b.hash,
-                                            0u64,
-                                        ))
-                                        .await?;
+                                        tx.send((id, PeerFilter::PeerId(peer_id), b.hash, 0u64))
+                                            .await?;
                                         requested.lock().insert(id, ());
                                     }
-                                    max_block = std::cmp::max(max_block, Some(b.number));
-                                }
-
-                                if let Some(max_block) = max_block {
-                                    let _ = handler.sentries[sentry_id]
-                                        .clone()
-                                        .peer_min_block(PeerMinBlockRequest {
-                                            peer_id: Some(peer_id.into()),
-                                            min_block: *max_block,
-                                        })
-                                        .await;
                                 }
                             }
-                            Message::BlockHeaders(ref headers) => {
-                                if let Some(max_header) =
-                                    headers.headers.iter().max_by_key(|header| header.number)
+                            Message::BlockHeaders(ref headers)
+                                if requested.lock().remove(&headers.request_id).is_some()
+                                    && headers.headers.len() == 1 =>
+                            {
+                                let header = &headers.headers[0];
+                                let hash = header.hash();
+
                                 {
-                                    let _ = handler.sentries[sentry_id]
-                                        .clone()
-                                        .peer_min_block(PeerMinBlockRequest {
-                                            peer_id: Some(peer_id.into()),
-                                            min_block: max_header.number.0,
-                                        })
-                                        .await;
+                                    let mut caches = handler.block_caches.lock();
+
+                                    caches.block_cache.insert(hash, header.number);
+                                    caches.block_cache.insert(
+                                        header.parent_hash,
+                                        BlockNumber(header.number.checked_sub(1).unwrap_or(0)),
+                                    );
+
+                                    caches.parent_cache.insert(hash, header.parent_hash);
                                 }
 
-                                if tip_discovery
-                                    && requested.lock().remove(&headers.request_id).is_some()
-                                    && headers.headers.len() == 1
-                                {
-                                    let header = &headers.headers[0];
-                                    let hash = header.hash();
-
-                                    if header.number > handler.chain_tip.borrow().0 {
-                                        let _ =
-                                            handler.chain_tip_sender.send((header.number, hash));
-                                        for skip in 1..4_u64 {
-                                            let id = rand::thread_rng().gen::<u64>();
-                                            tx.send((id, PeerFilter::All, hash, skip)).await?;
-                                            requested.lock().insert(id, ());
-                                        }
+                                if header.number > block_number {
+                                    *handler.chain_tip.write() = (header.number, hash);
+                                    for skip in 1..4_u64 {
+                                        let id = rand::thread_rng().gen::<u64>();
+                                        tx.send((id, PeerFilter::All, hash, skip)).await?;
+                                        requested.lock().insert(id, ());
                                     }
                                 }
                             }
                             Message::NewBlock(inner) => {
                                 let hash = inner.block.header.hash();
                                 let number = inner.block.header.number;
+                                let parent_hash = inner.block.header.parent_hash;
 
-                                handler
-                                    .block_cache
-                                    .lock()
-                                    .insert(hash, (sentry_id, peer_id, inner.block));
-                                handler.block_cache_notify.notify_one();
+                                {
+                                    let mut caches = handler.block_caches.lock();
+                                    caches.block_cache.insert(hash, number);
+                                    caches.block_cache.insert(
+                                        parent_hash,
+                                        BlockNumber(number.checked_sub(1).unwrap_or(0)),
+                                    );
 
-                                if tip_discovery && number > handler.chain_tip.borrow().0 {
-                                    let _ = handler.chain_tip_sender.send((number, hash));
+                                    caches.parent_cache.insert(hash, parent_hash);
+                                }
+
+                                if number > block_number {
+                                    *handler.chain_tip.write() = (inner.block.header.number, hash);
                                     for skip in 1..4_u64 {
                                         let id = rand::thread_rng().gen::<u64>();
                                         tx.send((id, PeerFilter::All, hash, skip)).await?;
@@ -167,7 +146,7 @@ impl Node {
                         }
                     }
                 }
-                Ok::<_, anyhow::Error>(())
+                Ok::<(), anyhow::Error>(())
             }
         });
 
@@ -193,37 +172,35 @@ impl Node {
             }
         });
 
-        if tip_discovery {
-            let _ = tasks.spawn({
-                let handler = self.clone();
-                async move {
-                    loop {
-                        let (block_number, _) = *handler.chain_tip.borrow();
+        let _ = tasks.spawn({
+            let handler = self.clone();
+            async move {
+                loop {
+                    let (block_number, _) = *handler.chain_tip.read();
 
-                        for skip in 1..4 {
-                            let request_id = rand::thread_rng().gen::<u64>();
-                            requested.lock().insert(request_id, ());
+                    for skip in 1..4 {
+                        let request_id = rand::thread_rng().gen::<u64>();
+                        requested.lock().insert(request_id, ());
 
-                            let msg = Message::GetBlockHeaders(GetBlockHeaders {
-                                request_id,
-                                params: HeaderRequest {
-                                    start: BlockId::Number(block_number),
-                                    limit: 1,
-                                    reverse: false,
-                                    skip,
-                                }
-                                .into(),
-                            });
+                        let msg = Message::GetBlockHeaders(GetBlockHeaders {
+                            request_id,
+                            params: HeaderRequest {
+                                start: BlockId::Number(block_number),
+                                limit: 1,
+                                reverse: false,
+                                skip,
+                            }
+                            .into(),
+                        });
 
-                            let _ = handler.send_message(msg, PeerFilter::All).await;
-                        }
-
-                        tokio::time::sleep(Self::SYNC_INTERVAL).await;
+                        let _ = handler.send_message(msg, PeerFilter::All).await;
                     }
-                    Ok::<(), anyhow::Error>(())
+
+                    tokio::time::sleep(Self::SYNC_INTERVAL).await;
                 }
-            });
-        }
+                Ok::<(), anyhow::Error>(())
+            }
+        });
 
         tasks.spawn({
             let handler = self.clone();
@@ -237,31 +214,23 @@ impl Node {
             async move {
                 while let Some(msg) = stream.next().await {
                     let peer_id = msg.peer_id;
-                    let sentry_id = msg.sentry_id;
 
                     match msg.msg {
                         Message::GetBlockHeaders(inner) => {
                             let msg = Message::BlockHeaders(BlockHeaders {
                                 request_id: inner.request_id,
-                                headers: handler
-                                    .stash
-                                    .get_headers(inner.params)
-                                    .unwrap_or_default(),
+                                headers: self.stash.get_headers(inner.params).unwrap_or_default(),
                             });
 
-                            handler
-                                .send_message(msg, PeerFilter::Peer(peer_id, sentry_id))
-                                .await;
+                            self.send_message(msg, PeerFilter::PeerId(peer_id)).await?;
                         }
                         Message::GetBlockBodies(inner) => {
                             let msg = Message::BlockBodies(BlockBodies {
                                 request_id: inner.request_id,
-                                bodies: handler.stash.get_bodies(inner.hashes).unwrap_or_default(),
+                                bodies: self.stash.get_bodies(inner.hashes).unwrap_or_default(),
                             });
 
-                            handler
-                                .send_message(msg, PeerFilter::Peer(peer_id, sentry_id))
-                                .await;
+                            self.send_message(msg, PeerFilter::PeerId(peer_id)).await?;
                         }
                         _ => unreachable!(),
                     }
@@ -269,6 +238,7 @@ impl Node {
 
                 Ok::<(), anyhow::Error>(())
             }
+            .instrument(span!(Level::DEBUG, "inbound handler"))
         });
 
         pending::<()>().await;
@@ -281,8 +251,14 @@ impl Node {
         self.bad_blocks.insert(hash);
     }
 
+    /// Finds first bad block if any, and returns it's index in given iterable.
+    #[inline]
+    pub fn position_bad_block<'a, T: Iterator<Item = &'a H256>>(&self, iter: T) -> Option<usize> {
+        iter.into_iter().position(|h| self.bad_blocks.contains(h))
+    }
+
     /// Updates current node status.
-    pub async fn update_chain_head(&self, status: Option<Status>) {
+    pub async fn update_chain_head(&self, status: Option<Status>) -> anyhow::Result<()> {
         if let Some(val) = status {
             *self.status.write() = val;
         }
@@ -303,15 +279,11 @@ impl Node {
             }),
             max_block: *height,
         };
-        self.set_status(status_data).await
+        self.set_status(status_data).await?;
+        Ok(())
     }
 
-    pub async fn send_message(
-        &self,
-        msg: Message,
-        pred: PeerFilter,
-    ) -> HashSet<(SentryId, PeerId)> {
-        debug!("Sending message: {msg:?} to peers {pred:?}");
+    pub async fn send_message(&self, msg: Message, pred: PeerFilter) -> anyhow::Result<()> {
         let id = grpc_sentry::MessageId::from(msg.id()) as i32;
         let data = || -> bytes::Bytes {
             let mut buf = BytesMut::new();
@@ -320,13 +292,12 @@ impl Node {
         }();
 
         self.send_raw(grpc_sentry::OutboundMessageData { id, data }, pred)
-            .await
+            .await?;
+
+        Ok(())
     }
 
-    pub async fn send_many_header_requests<T>(
-        self: Arc<Self>,
-        requests: T,
-    ) -> HashSet<(SentryId, PeerId)>
+    pub async fn send_many_header_requests<T>(self: Arc<Self>, requests: T) -> anyhow::Result<()>
     where
         T: IntoIterator<Item = HeaderRequest>,
     {
@@ -336,67 +307,68 @@ impl Node {
                 let node = self.clone();
                 tokio::spawn(async move {
                     trace!("Sending header request: {request:?}");
-                    node.send_header_request(None, request, None).await
+                    node.send_header_request(request).await
                 })
             })
             .collect::<FuturesUnordered<_>>()
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .flat_map(|res| res.ok())
-            .flatten()
-            .collect()
+            .map(|_| ())
+            .collect::<()>()
+            .await;
+        Ok(())
     }
 
-    pub async fn send_header_request(
-        &self,
-        request_id: Option<u64>,
-        request: HeaderRequest,
-        max_block: Option<BlockNumber>,
-    ) -> HashSet<(SentryId, PeerId)> {
-        self.send_message(
-            Message::GetBlockHeaders(GetBlockHeaders {
-                request_id: request_id.unwrap_or_else(|| rand::thread_rng().gen::<u64>()),
-                params: request.into(),
-            }),
-            if let Some(max_block) = max_block {
-                PeerFilter::MinBlock(max_block.0)
-            } else {
-                PeerFilter::All
-            },
-        )
-        .await
+    pub async fn send_header_request(&self, request: HeaderRequest) -> anyhow::Result<()> {
+        self.send_message(request.into(), PeerFilter::All).await?;
+
+        Ok(())
     }
 
     /// Sends a block bodies request to other peers.
-    pub async fn send_block_request<'a>(
-        &self,
-        request_id: u64,
-        blocks: &'a [(BlockNumber, H256)],
-        min_block_filter: bool,
-    ) -> Option<(SentryId, PeerId)> {
-        self.update_chain_head(None).await;
+    pub async fn send_block_request<'a>(&self, hashes: &'a [H256]) -> anyhow::Result<()> {
+        self.update_chain_head(None).await?;
 
-        let hashes = blocks.iter().map(|(_, h)| *h).collect::<Vec<_>>();
+        let request_id = rand::thread_rng().gen::<u64>();
+        pub struct GetBlockBodies_<'a> {
+            pub request_id: u64,
+            pub hashes: &'a [H256],
+        }
+        trait E {
+            fn rlp_header(&self) -> fastrlp::Header;
+        }
+        impl<'a> E for GetBlockBodies_<'a> {
+            fn rlp_header(&self) -> fastrlp::Header {
+                let mut rlp_head = fastrlp::Header {
+                    list: true,
+                    payload_length: 0,
+                };
+                rlp_head.payload_length += fastrlp::Encodable::length(&self.request_id);
+                rlp_head.payload_length += fastrlp::list_length(self.hashes);
+                rlp_head
+            }
+        }
+        impl<'a> Encodable for GetBlockBodies_<'a> {
+            fn length(&self) -> usize {
+                let rlp_head = E::rlp_header(self);
+                fastrlp::length_of_length(rlp_head.payload_length) + rlp_head.payload_length
+            }
+            fn encode(&self, out: &mut dyn BufMut) {
+                E::rlp_header(self).encode(out);
+                fastrlp::Encodable::encode(&self.request_id, out);
+                fastrlp::encode_list(self.hashes, out);
+            }
+        }
+
         let data = grpc_sentry::OutboundMessageData {
             id: grpc_sentry::MessageId::from(MessageId::GetBlockBodies) as i32,
-            data: {
+            data: |hashes: &'_ [H256]| -> bytes::Bytes {
                 let mut buf = BytesMut::new();
-                GetBlockBodies { request_id, hashes }.encode(&mut buf);
+                GetBlockBodies_ { request_id, hashes }.encode(&mut buf);
                 buf.freeze()
-            },
+            }(hashes),
         };
-        let filter = if min_block_filter {
-            let min_block = blocks
-                .iter()
-                .min_by_key(|(block_number, _)| block_number)
-                .unwrap()
-                .0;
-            PeerFilter::MinBlock(*min_block)
-        } else {
-            PeerFilter::Random(1)
-        };
-        self.send_raw(data, filter).await.into_iter().next()
+        self.send_raw(data, PeerFilter::All).await?;
+
+        Ok(())
     }
 
     pub async fn send_pooled_transactions(
@@ -404,7 +376,7 @@ impl Node {
         request_id: RequestId,
         transactions: Vec<MessageWithSignature>,
         pred: PeerFilter,
-    ) -> HashSet<(SentryId, PeerId)> {
+    ) -> anyhow::Result<()> {
         let data = grpc_sentry::OutboundMessageData {
             id: grpc_sentry::MessageId::from(MessageId::PooledTransactions) as i32,
             data: |transactions: Vec<MessageWithSignature>| -> bytes::Bytes {
@@ -417,7 +389,9 @@ impl Node {
                 buf.freeze()
             }(transactions),
         };
-        self.send_raw(data, pred).await
+        self.send_raw(data, pred).await?;
+
+        Ok(())
     }
 
     pub async fn get_pooled_transactions<'a>(
@@ -425,7 +399,7 @@ impl Node {
         request_id: u64,
         hashes: &'a [H256],
         pred: PeerFilter,
-    ) -> HashSet<(SentryId, PeerId)> {
+    ) -> anyhow::Result<()> {
         pub struct GetPooledTransactions_<'a> {
             pub request_id: u64,
             pub hashes: &'a [H256],
@@ -458,13 +432,15 @@ impl Node {
 
         let data = grpc_sentry::OutboundMessageData {
             id: grpc_sentry::MessageId::from(MessageId::GetPooledTransactions) as i32,
-            data: || -> bytes::Bytes {
+            data: |hashes: &'_ [H256]| -> bytes::Bytes {
                 let mut buf = BytesMut::new();
                 GetPooledTransactions_ { request_id, hashes }.encode(&mut buf);
                 buf.freeze()
-            }(),
+            }(hashes),
         };
-        self.send_raw(data, pred).await
+        self.send_raw(data, pred).await?;
+
+        Ok(())
     }
 
     const SYNC_PREDICATE: [i32; 3] = [
@@ -473,7 +449,7 @@ impl Node {
         grpc_sentry::MessageId::NewBlock66 as i32,
     ];
     async fn sync_stream(&self) -> NodeStream {
-        self.update_chain_head(None).await;
+        let _ = self.update_chain_head(None).await;
 
         let sentries = self.sentries.iter().collect::<Vec<_>>();
         SentryStream::join_all(sentries, Self::SYNC_PREDICATE).await
@@ -487,7 +463,7 @@ impl Node {
     ];
 
     pub async fn stream_raw(&self) -> NodeStream {
-        self.update_chain_head(None).await;
+        let _ = self.update_chain_head(None).await;
 
         let sentries = self.sentries.iter().collect::<Vec<_>>();
         SentryStream::join_all(sentries, Self::RAW_PREDICATE).await
@@ -521,7 +497,7 @@ impl Node {
     const BODIES_PREDICATE: [i32; 1] = [grpc_sentry::MessageId::BlockBodies66 as i32];
 
     pub async fn stream_bodies(&self) -> NodeStream {
-        self.update_chain_head(None).await;
+        let _ = self.update_chain_head(None).await;
 
         let sentries = self.sentries.iter().collect::<Vec<_>>();
         SentryStream::join_all(sentries, Self::BODIES_PREDICATE).await
@@ -554,7 +530,10 @@ impl Node {
         sum
     }
 
-    pub async fn penalize_peer(&self, peer_id: impl Into<ethereum_interfaces::types::H512>) {
+    pub async fn penalize_peer(
+        &self,
+        peer_id: impl Into<ethereum_interfaces::types::H512>,
+    ) -> anyhow::Result<()> {
         let request = grpc_sentry::PenalizePeerRequest {
             peer_id: Some(peer_id.into()),
             penalty: 0i32,
@@ -572,111 +551,79 @@ impl Node {
             .collect::<FuturesUnordered<_>>()
             .map(|_| ())
             .collect::<()>()
-            .await
+            .await;
+
+        Ok(())
     }
 }
 
 impl Node {
-    const TIMEOUT: Duration = Duration::from_secs(2);
-
     async fn send_raw(
         &self,
         data: impl Into<grpc_sentry::OutboundMessageData>,
         predicate: PeerFilter,
-    ) -> HashSet<(SentryId, PeerId)> {
-        let data = data.into();
-
-        async fn map_await<T, I, F>(
-            iter: T,
-            data: grpc_sentry::OutboundMessageData,
-            closure: F,
-        ) -> HashSet<(SentryId, PeerId)>
-        where
-            T: IntoIterator<Item = (SentryId, Sentry)>,
-            I: Future<Output = Result<tonic::Response<SentPeers>, tonic::Status>>,
-            F: Fn(Sentry, grpc_sentry::OutboundMessageData) -> I,
-        {
-            iter.into_iter()
-                .map(|(id, sentry)| {
-                    let data = data.clone();
-                    let fut = closure(sentry, data);
-                    async move {
-                        if let Ok(Ok(v)) = tokio::time::timeout(Node::TIMEOUT, fut).await {
-                            return v
-                                .into_inner()
-                                .peers
-                                .into_iter()
-                                .map(|peer_id| (id, peer_id.into()))
-                                .collect();
-                        }
-
-                        HashSet::new()
-                    }
-                })
-                .collect::<FuturesUnordered<_>>()
-                .collect::<Vec<_>>()
-                .await
-                .into_iter()
-                .flatten()
-                .collect()
-        }
-
-        match predicate {
-            PeerFilter::All => {
-                map_await(
-                    self.sentries.iter().cloned().enumerate(),
-                    data,
-                    |mut sentry, data| async move { sentry.send_message_to_all(data).await },
-                )
-                .await
-            }
-            PeerFilter::Random(max_peers) => {
-                map_await(
-                    self.sentries.iter().cloned().enumerate(),
-                    data,
-                    |mut sentry, data| async move {
-                        sentry
-                            .send_message_to_random_peers(
-                                grpc_sentry::SendMessageToRandomPeersRequest {
-                                    data: Some(data),
-                                    max_peers,
-                                },
-                            )
-                            .await
-                    },
-                )
-                .await
-            }
-            PeerFilter::Peer(peer_id, sentry_id) => {
-                let iter = std::iter::once((sentry_id, self.sentries[sentry_id].clone()));
-                map_await(iter, data, |mut sentry, data| async move {
+    ) -> anyhow::Result<()> {
+        let send_msg = move |mut sentry: Sentry,
+                             pred: PeerFilter,
+                             data: grpc_sentry::OutboundMessageData| async move {
+            match pred {
+                PeerFilter::All => {
+                    sentry.send_message_to_all(data).await?;
+                }
+                PeerFilter::Random(max_peers) => {
+                    sentry
+                        .send_message_to_random_peers(
+                            grpc_sentry::SendMessageToRandomPeersRequest {
+                                data: Some(data),
+                                max_peers,
+                            },
+                        )
+                        .await?;
+                }
+                PeerFilter::PeerId(peer_id) => {
                     sentry
                         .send_message_by_id(grpc_sentry::SendMessageByIdRequest {
                             data: Some(data),
                             peer_id: Some(peer_id.into()),
                         })
-                        .await
-                })
-                .await
-            }
-            PeerFilter::MinBlock(min_block) => {
-                map_await(
-                    self.sentries.iter().cloned().enumerate(),
-                    data,
-                    |mut sentry, data| async move {
-                        sentry
-                            .send_message_by_min_block(grpc_sentry::SendMessageByMinBlockRequest {
-                                data: Some(data),
-                                min_block,
-                            })
-                            .await
-                    },
-                )
-                .await
-            }
-        }
+                        .await?;
+                }
+                PeerFilter::MinBlock(min_block) => {
+                    sentry
+                        .send_message_by_min_block(grpc_sentry::SendMessageByMinBlockRequest {
+                            data: Some(data),
+                            min_block,
+                        })
+                        .await?;
+                }
+            };
+            Ok::<_, anyhow::Error>(())
+        };
+
+        const TIMEOUT: Duration = Duration::from_secs(2);
+
+        let data = data.into();
+        self.sentries
+            .clone()
+            .into_iter()
+            .map(|sentry| {
+                let predicate = predicate.clone();
+                let data = data.clone();
+
+                async move {
+                    let _ =
+                        tokio::time::timeout(TIMEOUT, send_msg(sentry, predicate, data)).await?;
+                    Ok::<_, anyhow::Error>(())
+                }
+            })
+            .collect::<FuturesUnordered<_>>()
+            .map(|_| ())
+            .collect::<()>()
+            .await;
+
+        Ok(())
     }
-    async fn set_status(&self, status_data: grpc_sentry::StatusData) {
+    async fn set_status(&self, status_data: grpc_sentry::StatusData) -> anyhow::Result<()> {
         self.sentries
             .clone()
             .into_iter()
@@ -696,5 +643,6 @@ impl Node {
             .map(|_| ())
             .collect::<()>()
             .await;
+        Ok(())
     }
 }

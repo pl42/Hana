@@ -2,7 +2,7 @@ pub mod erigon;
 pub mod eth;
 pub mod net;
 pub mod otterscan;
-pub mod helpers {
+mod helpers {
     use crate::{
         accessors::chain,
         consensus::{engine_factory, DuoError},
@@ -128,6 +128,7 @@ pub mod helpers {
                         number: Some(U64::from(block_number.0)),
                         hash: Some(block_hash),
                         parent_hash: header.parent_hash,
+                        nonce: Some(header.nonce),
                         sha3_uncles: header.ommers_hash,
                         logs_bloom: Some(header.logs_bloom),
                         transactions_root: header.transactions_root,
@@ -136,9 +137,7 @@ pub mod helpers {
                         miner: header.beneficiary,
                         difficulty: header.difficulty,
                         total_difficulty: td,
-                        seal_fields: None,
-                        nonce: Some(header.nonce),
-                        mix_hash: Some(header.mix_hash),
+                        seal_fields: (header.mix_hash, header.nonce),
                         extra_data: header.extra_data.into(),
                         size: U64::zero(),
                         gas_limit: U64::from(header.gas_limit),
@@ -174,7 +173,7 @@ pub mod helpers {
         let mut buffer = Buffer::new(txn, Some(BlockNumber(block_number.0 - 1)));
 
         let block_execution_spec = chain_spec.collect_block_spec(block_number);
-        let mut engine = engine_factory(None, chain_spec)?;
+        let mut engine = engine_factory(chain_spec)?;
         let mut analysis_cache = AnalysisCache::default();
         let mut tracer = NoopTracer;
 

@@ -4,7 +4,7 @@ use bytes::Bytes;
 use std::fmt::Debug;
 
 #[auto_impl(&mut, &, Box)]
-pub trait HeaderReader: Debug + Send + Sync {
+pub trait BlockState: Debug + Send + Sync {
     fn read_header(
         &self,
         block_number: BlockNumber,
@@ -18,10 +18,7 @@ pub trait HeaderReader: Debug + Send + Sync {
 
         Ok(None)
     }
-}
 
-#[auto_impl(&mut, &, Box)]
-pub trait BlockReader: HeaderReader {
     fn read_body(
         &self,
         block_number: BlockNumber,
@@ -30,17 +27,20 @@ pub trait BlockReader: HeaderReader {
 }
 
 #[auto_impl(&mut, Box)]
-pub trait StateReader: Debug + Send + Sync {
+pub trait State: BlockState {
     fn read_account(&self, address: Address) -> anyhow::Result<Option<Account>>;
 
     fn read_code(&self, code_hash: H256) -> anyhow::Result<Bytes>;
 
     fn read_storage(&self, address: Address, location: U256) -> anyhow::Result<U256>;
-}
 
-#[auto_impl(&mut, Box)]
-pub trait StateWriter: Debug + Send + Sync {
     fn erase_storage(&mut self, address: Address) -> anyhow::Result<()>;
+
+    fn total_difficulty(
+        &self,
+        block_number: BlockNumber,
+        block_hash: H256,
+    ) -> anyhow::Result<Option<U256>>;
 
     /// State changes
     /// Change sets are backward changes of the state, i.e. account/storage values _at the beginning of a block_.
@@ -66,7 +66,3 @@ pub trait StateWriter: Debug + Send + Sync {
         current: U256,
     ) -> anyhow::Result<()>;
 }
-
-pub trait State: HeaderReader + StateReader + StateWriter {}
-
-impl<T> State for T where T: HeaderReader + StateReader + StateWriter {}

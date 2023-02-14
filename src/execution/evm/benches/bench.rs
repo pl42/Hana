@@ -9,7 +9,7 @@ use hana::{
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, profiler::Profiler, BatchSize, Criterion};
 use ethereum_types::Address;
-use ethnum::prelude::*;
+use ethnum::*;
 use hex_literal::hex;
 use pprof::{flamegraph::Options, ProfilerGuard};
 use serde::Deserialize;

@@ -10,15 +10,14 @@ use crate::{
     models::*,
     state::IntraBlockState,
     trie::root_hash,
-    HeaderReader, State, StateReader,
+    State,
 };
-use bytes::Bytes;
 use std::cmp::min;
 use TransactionAction;
 
 pub struct ExecutionProcessor<'r, 'tracer, 'analysis, 'e, 'h, 'b, 'c, S>
 where
-    S: StateReader,
+    S: State,
 {
     state: IntraBlockState<'r, S>,
     tracer: &'tracer mut dyn Tracer,
@@ -39,7 +38,7 @@ fn refund_gas<'r, S>(
     mut gas_left: u64,
 ) -> Result<u64, DuoError>
 where
-    S: StateReader,
+    S: State,
 {
     let mut refund = state.get_refund();
     if block_spec.revision < Revision::London {
@@ -72,9 +71,9 @@ pub fn execute_transaction<'r, S>(
     cumulative_gas_used: &mut u64,
     message: &Message,
     sender: Address,
-) -> Result<(Bytes, Receipt), DuoError>
+) -> Result<Receipt, DuoError>
 where
-    S: HeaderReader + StateReader,
+    S: State,
 {
     let rev = block_spec.revision;
 
@@ -156,16 +155,13 @@ where
 
     *cumulative_gas_used += gas_used;
 
-    Ok((
-        vm_res.output_data,
-        Receipt {
-            tx_type: message.tx_type(),
-            success: vm_res.status_code == StatusCode::Success,
-            cumulative_gas_used: *cumulative_gas_used,
-            bloom: logs_bloom(state.logs()),
-            logs: state.logs().to_vec(),
-        },
-    ))
+    Ok(Receipt {
+        tx_type: message.tx_type(),
+        success: vm_res.status_code == StatusCode::Success,
+        cumulative_gas_used: *cumulative_gas_used,
+        bloom: logs_bloom(state.logs()),
+        logs: state.logs().to_vec(),
+    })
 }
 
 #[derive(Debug)]
@@ -183,7 +179,7 @@ impl From<anyhow::Error> for TransactionValidationError {
 impl<'r, 'tracer, 'analysis, 'e, 'h, 'b, 'c, S>
     ExecutionProcessor<'r, 'tracer, 'analysis, 'e, 'h, 'b, 'c, S>
 where
-    S: HeaderReader + StateReader,
+    S: State,
 {
     pub fn new(
         state: &'r mut S,
@@ -301,7 +297,6 @@ where
             message,
             sender,
         )
-        .map(|(_, receipt)| receipt)
     }
 
     pub fn execute_block_no_post_validation_while(
@@ -329,7 +324,10 @@ where
             receipts.push(self.execute_transaction(&txn.message, txn.sender)?);
         }
 
-        for change in self.engine.finalize(self.header, &self.block.ommers)? {
+        for change in
+            self.engine
+                .finalize(self.header, &self.block.ommers, self.block_spec.revision)?
+        {
             match change {
                 FinalizationChange::Reward {
                     address, amount, ..
@@ -346,7 +344,7 @@ where
         self.execute_block_no_post_validation_while(|_, _| true)
     }
 
-    pub fn execute_and_check_block(&mut self) -> Result<Vec<Receipt>, DuoError> {
+    pub fn execute_and_write_block(mut self) -> Result<Vec<Receipt>, DuoError> {
         let receipts = self.execute_block_no_post_validation()?;
 
         let gas_used = receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0);
@@ -372,6 +370,7 @@ where
             .into());
         }
 
+        let block_num = self.header.number;
         let rev = self.block_spec.revision;
 
         if rev >= Revision::Byzantium {
@@ -396,19 +395,7 @@ where
             .into());
         }
 
-        Ok(receipts)
-    }
-}
-
-impl<'r, 'tracer, 'analysis, 'e, 'h, 'b, 'c, S>
-    ExecutionProcessor<'r, 'tracer, 'analysis, 'e, 'h, 'b, 'c, S>
-where
-    S: State,
-{
-    pub fn execute_and_write_block(mut self) -> Result<Vec<Receipt>, DuoError> {
-        let receipts = self.execute_and_check_block()?;
-
-        self.state.write_to_db(self.header.number)?;
+        self.state.write_to_db(block_num)?;
 
         Ok(receipts)
     }
@@ -420,7 +407,7 @@ mod tests {
     use crate::{
         execution::{address::create_address, tracer::NoopTracer},
         res::chainspec::MAINNET,
-        InMemoryState, StateReader, StateWriter,
+        InMemoryState,
     };
     use bytes::Bytes;
     use bytes_literal::bytes;
@@ -451,7 +438,7 @@ mod tests {
 
         let mut state = InMemoryState::default();
         let mut analysis_cache = AnalysisCache::default();
-        let mut engine = engine_factory(None, MAINNET.clone()).unwrap();
+        let mut engine = engine_factory(MAINNET.clone()).unwrap();
         let block_spec = MAINNET.collect_block_spec(header.number);
         let mut tracer = NoopTracer;
         let mut processor = ExecutionProcessor::new(
@@ -493,7 +480,7 @@ mod tests {
 
         let mut state = InMemoryState::default();
         let mut analysis_cache = AnalysisCache::default();
-        let mut engine = engine_factory(None, MAINNET.clone()).unwrap();
+        let mut engine = engine_factory(MAINNET.clone()).unwrap();
         let block_spec = MAINNET.collect_block_spec(header.number);
         let mut tracer = NoopTracer;
         let mut processor = ExecutionProcessor::new(
@@ -556,7 +543,7 @@ mod tests {
 
         let mut state = InMemoryState::default();
         let mut analysis_cache = AnalysisCache::default();
-        let mut engine = engine_factory(None, MAINNET.clone()).unwrap();
+        let mut engine = engine_factory(MAINNET.clone()).unwrap();
         let block_spec = MAINNET.collect_block_spec(header.number);
         let mut tracer = NoopTracer;
         let mut processor = ExecutionProcessor::new(
@@ -672,7 +659,7 @@ mod tests {
 
         let mut state = InMemoryState::default();
         let mut analysis_cache = AnalysisCache::default();
-        let mut engine = engine_factory(None, MAINNET.clone()).unwrap();
+        let mut engine = engine_factory(MAINNET.clone()).unwrap();
         let block_spec = MAINNET.collect_block_spec(header.number);
         let mut tracer = NoopTracer;
         let mut processor = ExecutionProcessor::new(
@@ -776,7 +763,7 @@ mod tests {
         };
 
         let mut analysis_cache = AnalysisCache::default();
-        let mut engine = engine_factory(None, MAINNET.clone()).unwrap();
+        let mut engine = engine_factory(MAINNET.clone()).unwrap();
         let block_spec = MAINNET.collect_block_spec(header.number);
         let mut tracer = NoopTracer;
         let mut processor = ExecutionProcessor::new(
@@ -829,7 +816,7 @@ mod tests {
 
         let mut state = InMemoryState::default();
         let mut analysis_cache = AnalysisCache::default();
-        let mut engine = engine_factory(None, MAINNET.clone()).unwrap();
+        let mut engine = engine_factory(MAINNET.clone()).unwrap();
         let block_spec = MAINNET.collect_block_spec(header.number);
         let mut tracer = NoopTracer;
         let mut processor = ExecutionProcessor::new(

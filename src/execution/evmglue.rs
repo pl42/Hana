@@ -12,7 +12,7 @@ use crate::{
     },
     h256_to_u256,
     models::*,
-    u256_to_h256, HeaderReader, IntraBlockState, StateReader,
+    u256_to_h256, IntraBlockState, State,
 };
 use anyhow::Context;
 use bytes::Bytes;
@@ -29,7 +29,7 @@ pub struct CallResult {
 
 struct Evm<'r, 'state, 'tracer, 'analysis, 'h, 'c, 't, B>
 where
-    B: HeaderReader + StateReader,
+    B: State,
 {
     state: &'state mut IntraBlockState<'r, B>,
     tracer: &'tracer mut dyn Tracer,
@@ -41,7 +41,7 @@ where
     beneficiary: Address,
 }
 
-pub fn execute<'db, 'tracer, 'analysis, B: HeaderReader + StateReader>(
+pub fn execute<'db, 'tracer, 'analysis, B: State>(
     state: &mut IntraBlockState<'db, B>,
     tracer: &'tracer mut dyn Tracer,
     analysis_cache: &'analysis mut AnalysisCache,
@@ -95,7 +95,7 @@ pub fn execute<'db, 'tracer, 'analysis, B: HeaderReader + StateReader>(
 impl<'r, 'state, 'tracer, 'analysis, 'h, 'c, 't, B>
     Evm<'r, 'state, 'tracer, 'analysis, 'h, 'c, 't, B>
 where
-    B: HeaderReader + StateReader,
+    B: State,
 {
     fn create(&mut self, message: &CreateMessage) -> anyhow::Result<Output> {
         let mut res = Output {
@@ -369,7 +369,7 @@ where
             Revision::Byzantium | Revision::Constantinople | Revision::Petersburg => {
                 precompiled::NUM_OF_BYZANTIUM_CONTRACTS as u8
             }
-            Revision::Istanbul | Revision::Berlin | Revision::London | Revision::Paris => {
+            Revision::Istanbul | Revision::Berlin | Revision::London | Revision::Shanghai => {
                 precompiled::NUM_OF_ISTANBUL_CONTRACTS as u8
             }
         }
@@ -388,12 +388,12 @@ where
 
 struct EvmHost<'r, 'state, 'tracer, 'analysis, 'h, 'c, 't, 'a, B>
 where
-    B: HeaderReader + StateReader,
+    B: State,
 {
     inner: &'a mut Evm<'r, 'state, 'tracer, 'analysis, 'h, 'c, 't, B>,
 }
 
-impl<'r, 'state, 'tracer, 'analysis, 'h, 'c, 't, 'a, B: HeaderReader + StateReader> Host
+impl<'r, 'state, 'tracer, 'analysis, 'h, 'c, 't, 'a, B: State> Host
     for EvmHost<'r, 'state, 'tracer, 'analysis, 'h, 'c, 't, 'a, B>
 {
     fn trace_instructions(&self) -> bool {
@@ -595,11 +595,7 @@ impl<'r, 'state, 'tracer, 'analysis, 'h, 'c, 't, 'a, B: HeaderReader + StateRead
         let block_number = self.inner.header.number.0;
         let block_timestamp = self.inner.header.timestamp;
         let block_gas_limit = self.inner.header.gas_limit;
-        let block_difficulty = if self.inner.block_spec.revision >= Revision::Paris {
-            h256_to_u256(self.inner.header.mix_hash)
-        } else {
-            self.inner.header.difficulty
-        };
+        let block_difficulty = self.inner.header.difficulty;
         let chain_id = self.inner.block_spec.params.chain_id.0.into();
         let block_base_fee = base_fee_per_gas;
 
@@ -666,7 +662,7 @@ mod tests {
     use bytes_literal::bytes;
     use hex_literal::hex;
 
-    fn execute<B: HeaderReader + StateReader>(
+    fn execute<B: State>(
         state: &mut IntraBlockState<'_, B>,
         header: &PartialHeader,
         message: &Message,
