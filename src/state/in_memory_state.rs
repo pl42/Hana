@@ -205,10 +205,16 @@ impl InMemoryState {
         Ok(None)
     }
 
-    pub fn total_difficulty(&self, block_number: BlockNumber, block_hash: H256) -> Option<U256> {
-        self.difficulty
-            .get(block_number.0 as usize)
-            .and_then(|difficulty_map| difficulty_map.get(&block_hash).cloned())
+    pub fn total_difficulty(
+        &self,
+        block_number: BlockNumber,
+        block_hash: H256,
+    ) -> anyhow::Result<Option<U256>> {
+        if let Some(difficulty_map) = self.difficulty.get(block_number.0 as usize) {
+            return Ok(difficulty_map.get(&block_hash).cloned());
+        }
+
+        Ok(None)
     }
 
     pub fn canonize_block(&mut self, block_number: BlockNumber, block_hash: H256) {
@@ -341,17 +347,15 @@ impl StateWriter for InMemoryState {
         initial: Option<Account>,
         current: Option<Account>,
     ) {
-        if initial != current {
-            self.account_changes
-                .entry(self.block_number)
-                .or_default()
-                .insert(address, initial);
+        self.account_changes
+            .entry(self.block_number)
+            .or_default()
+            .insert(address, initial);
 
-            if let Some(current) = current {
-                self.accounts.insert(address, current);
-            } else {
-                self.accounts.remove(&address);
-            }
+        if let Some(current) = current {
+            self.accounts.insert(address, current);
+        } else {
+            self.accounts.remove(&address);
         }
     }
 
@@ -368,21 +372,19 @@ impl StateWriter for InMemoryState {
         initial: U256,
         current: U256,
     ) -> anyhow::Result<()> {
-        if initial != current {
-            self.storage_changes
-                .entry(self.block_number)
-                .or_default()
-                .entry(address)
-                .or_default()
-                .insert(location, initial);
+        self.storage_changes
+            .entry(self.block_number)
+            .or_default()
+            .entry(address)
+            .or_default()
+            .insert(location, initial);
 
-            let e = self.storage.entry(address).or_default();
+        let e = self.storage.entry(address).or_default();
 
-            if current == 0 {
-                e.remove(&location);
-            } else {
-                e.insert(location, current);
-            }
+        if current == 0 {
+            e.remove(&location);
+        } else {
+            e.insert(location, current);
         }
 
         Ok(())
