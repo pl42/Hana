@@ -27,12 +27,14 @@ chrono = "0.4"
 cidr = "0.2"
 cipher = { version = "0.4", features = ["block-padding"] }
 clap = { version = "3", features = ["derive"] }
-croaring = { git = "https://github.com/saulius/croaring-rs" }
+croaring = { git = "https://github.com/vorot93/croaring-rs", branch = "staging" }
+crossterm = { version = "0.23", optional = true }
 ctr = "0.9"
 data-encoding = "2"
 derive_more = "0.99"
 digest = "0.10"
 directories = "4.0"
+e2p-fileflags = { git = "https://github.com/michaellass/e2p-fileflags" }
 educe = { version = "0.4", features = ["Debug", "Default"] }
 enr = { version = "0.6", default-features = false, features = [
   "rust-secp256k1",
@@ -43,12 +45,9 @@ ethereum-forkid = "0.8.0"
 ethereum-interfaces = { git = "https://github.com/ledgerwatch/interfaces", features = [
   "remotekv",
   "sentry",
-  "web3",
 ] }
 ethereum-types = { version = "0.13", features = ["codec"] }
-ethereum-jsonrpc = { git = "https://github.com/rust-ethereum/jsonrpc", features = [
-  "server",
-] }
+ethereum-jsonrpc = { git = "https://github.com/rust-ethereum/jsonrpc" }
 ethnum = { version = "1", features = ["llvm-intrinsics", "rlp", "scale"] }
 fastrlp = { version = "0.1", features = [
   "derive",
@@ -74,7 +73,7 @@ igd = { git = "https://github.com/stevefan1999-personal/rust-igd", features = [
   "tokio1",
 ] }
 itertools = "0.10"
-jsonrpsee = { version = "0.14", features = ["server"] }
+jsonrpsee = { version = "0.14", features = ["server", "macros"] }
 lru = "0.7"
 maplit = "1"
 mdbx = { package = "libmdbx", version = "0.1" }
@@ -93,7 +92,7 @@ rand = "0.8"
 rayon = "1"
 ripemd = "0.1"
 ron = "0.7"
-secp256k1 = { version = "0.23", features = [
+secp256k1 = { version = "0.22", features = [
   "global-context",
   "rand-std",
   "recovery",
@@ -138,9 +137,6 @@ hashbrown = { version = "0.12.0", features = [
 ] }
 dashmap = "5.3"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-e2p-fileflags = { git = "https://github.com/michaellass/e2p-fileflags" }
-
 [features]
 default = []
 console = ["tokio/tracing", "dep:console-subscriber"]
@@ -153,7 +149,7 @@ vergen = "7"
 bytes-literal = { git = "https://github.com/vorot93/bytes-literal" }
 criterion = { version = "0.3", default-features = false }
 include_dir = "0.7"
-pprof = { version = "0.10", features = ["flamegraph"] }
+pprof = { version = "0.9", features = ["flamegraph"] }
 proptest = "1.0.0"
 rand = { version = "0.8", features = ["std"] }
 tokio = { version = "1.18", features = ["full"] }

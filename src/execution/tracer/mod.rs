@@ -1,4 +1,3 @@
-pub mod adhoc;
 pub mod eip3155_tracer;
 
 use auto_impl::auto_impl;
@@ -16,13 +15,13 @@ use std::{
 
 use super::evm::Output;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CodeKind {
     Precompile,
     Bytecode(Option<Bytes>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CallKind {
     Call,
     CallCode,
@@ -30,7 +29,7 @@ pub enum CallKind {
     StaticCall,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MessageKind {
     Create {
         salt: Option<U256>,
@@ -67,7 +66,7 @@ pub trait Tracer: Debug + Send {
         depth: u16,
     ) {
     }
-    fn capture_end(&mut self, depth: usize, start_gas: u64, output: &Output) {}
+    fn capture_end(&mut self, output: &Output) {}
     fn capture_self_destruct(&mut self, caller: Address, beneficiary: Address, balance: U256) {}
     fn capture_account_read(&mut self, account: Address) {}
     fn capture_account_write(&mut self, account: Address) {}

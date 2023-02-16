@@ -2,8 +2,7 @@ pub mod erigon;
 pub mod eth;
 pub mod net;
 pub mod otterscan;
-pub mod trace;
-pub mod helpers {
+mod helpers {
     use crate::{
         accessors::chain,
         consensus::{engine_factory, DuoError},
@@ -13,7 +12,7 @@ pub mod helpers {
         kv::{mdbx::*, tables},
         models::*,
         stagedsync::stages,
-        Buffer, StateReader,
+        Buffer,
     };
     use anyhow::format_err;
     use ethereum_jsonrpc::types;
@@ -25,20 +24,6 @@ pub mod helpers {
             match e {
                 DuoError::Validation(e) => format_err!("validation error: {:?}", e).into(),
                 DuoError::Internal(e) => e.into(),
-            }
-        }
-    }
-
-    impl From<types::AccessListEntry> for AccessListItem {
-        fn from(
-            types::AccessListEntry {
-                address,
-                storage_keys,
-            }: types::AccessListEntry,
-        ) -> Self {
-            Self {
-                address,
-                slots: storage_keys.into_iter().collect(),
             }
         }
     }
@@ -143,6 +128,7 @@ pub mod helpers {
                         number: Some(U64::from(block_number.0)),
                         hash: Some(block_hash),
                         parent_hash: header.parent_hash,
+                        nonce: Some(header.nonce),
                         sha3_uncles: header.ommers_hash,
                         logs_bloom: Some(header.logs_bloom),
                         transactions_root: header.transactions_root,
@@ -151,9 +137,7 @@ pub mod helpers {
                         miner: header.beneficiary,
                         difficulty: header.difficulty,
                         total_difficulty: td,
-                        seal_fields: None,
-                        nonce: Some(header.nonce),
-                        mix_hash: Some(header.mix_hash),
+                        seal_fields: (header.mix_hash, header.nonce),
                         extra_data: header.extra_data.into(),
                         size: U64::zero(),
                         gas_limit: U64::from(header.gas_limit),
@@ -189,7 +173,7 @@ pub mod helpers {
         let mut buffer = Buffer::new(txn, Some(BlockNumber(block_number.0 - 1)));
 
         let block_execution_spec = chain_spec.collect_block_spec(block_number);
-        let mut engine = engine_factory(None, chain_spec)?;
+        let mut engine = engine_factory(chain_spec)?;
         let mut analysis_cache = AnalysisCache::default();
         let mut tracer = NoopTracer;
 
@@ -282,138 +266,5 @@ pub mod helpers {
                     )
                     .collect()
             })
-    }
-
-    pub fn convert_message_call<S: StateReader>(
-        state: &S,
-        chain_id: ChainId,
-        call: types::MessageCall,
-        header: &PartialHeader,
-        default_gas_price: U256,
-        default_gas_limit: Option<u64>,
-    ) -> anyhow::Result<(Address, Message)> {
-        Ok(match call {
-            types::MessageCall::Legacy {
-                from,
-                to,
-                gas,
-                gas_price,
-                value,
-                data,
-            } => {
-                let sender = from.unwrap_or_else(Address::zero);
-
-                let gas_limit = if let Some(gas) = gas {
-                    gas.as_u64()
-                } else if let Some(gas) = default_gas_limit {
-                    gas
-                } else {
-                    header.gas_limit
-                };
-
-                let message = Message::Legacy {
-                    chain_id: None,
-                    nonce: state
-                        .read_account(sender)?
-                        .map(|acc| acc.nonce)
-                        .unwrap_or_default(),
-                    gas_price: gas_price.unwrap_or(default_gas_price),
-                    gas_limit,
-                    action: if let Some(to) = to {
-                        TransactionAction::Call(to)
-                    } else {
-                        TransactionAction::Create
-                    },
-                    value: value.unwrap_or_default(),
-                    input: data.unwrap_or_default().into(),
-                };
-
-                (sender, message)
-            }
-            types::MessageCall::EIP2930 {
-                from,
-                to,
-                gas,
-                gas_price,
-                value,
-                data,
-                access_list,
-            } => {
-                let sender = from.unwrap_or_else(Address::zero);
-
-                let gas_limit = if let Some(gas) = gas {
-                    gas.as_u64()
-                } else if let Some(gas) = default_gas_limit {
-                    gas
-                } else {
-                    header.gas_limit
-                };
-
-                let message = Message::EIP2930 {
-                    chain_id,
-                    nonce: state
-                        .read_account(sender)?
-                        .map(|acc| acc.nonce)
-                        .unwrap_or_default(),
-                    gas_price: gas_price.unwrap_or(default_gas_price),
-                    gas_limit,
-                    action: if let Some(to) = to {
-                        TransactionAction::Call(to)
-                    } else {
-                        TransactionAction::Create
-                    },
-                    value: value.unwrap_or_default(),
-                    input: data.unwrap_or_default().into(),
-                    access_list: access_list
-                        .map(|access_list| access_list.into_iter().map(From::from).collect())
-                        .unwrap_or_default(),
-                };
-
-                (sender, message)
-            }
-            types::MessageCall::EIP1559 {
-                from,
-                to,
-                gas,
-                max_fee_per_gas,
-                max_priority_fee_per_gas,
-                value,
-                data,
-                access_list,
-            } => {
-                let sender = from.unwrap_or_else(Address::zero);
-
-                let gas_limit = if let Some(gas) = gas {
-                    gas.as_u64()
-                } else if let Some(gas) = default_gas_limit {
-                    gas
-                } else {
-                    header.gas_limit
-                };
-
-                let message = Message::EIP1559 {
-                    chain_id,
-                    nonce: state
-                        .read_account(sender)?
-                        .map(|acc| acc.nonce)
-                        .unwrap_or_default(),
-                    max_fee_per_gas: max_fee_per_gas.unwrap_or(default_gas_price),
-                    max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or(default_gas_price),
-                    gas_limit,
-                    action: if let Some(to) = to {
-                        TransactionAction::Call(to)
-                    } else {
-                        TransactionAction::Create
-                    },
-                    value: value.unwrap_or_default(),
-                    input: data.unwrap_or_default().into(),
-                    access_list: access_list
-                        .map(|access_list| access_list.into_iter().map(From::from).collect())
-                        .unwrap_or_default(),
-                };
-
-                (sender, message)
-            }
-        })
     }
 }

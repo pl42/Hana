@@ -58,8 +58,9 @@ where
         let chainspec = tx
             .get(tables::Config, ())?
             .ok_or_else(|| format_err!("no chainspec found"))?;
+        let revision = chainspec.collect_block_spec(block_number).revision;
         let finalization_changes =
-            engine_factory(None, chainspec)?.finalize(&header.into(), &ommers)?;
+            engine_factory(chainspec)?.finalize(&header.into(), &ommers, revision)?;
 
         let mut block_reward = U256::ZERO;
         let mut uncle_reward = U256::ZERO;
@@ -186,8 +187,7 @@ where
             &mut cumulative_gas_used,
             &transaction.message,
             sender,
-        )?
-        .1;
+        )?;
 
         if tracer.touched() {
             let gas_used = U64::from(cumulative_gas_used - prev_cumulative_gas_used);
@@ -455,7 +455,7 @@ where
             let mut buffer = Buffer::new(&txn, Some(BlockNumber(block_number.0 - 1)));
 
             let block_execution_spec = chain_spec.collect_block_spec(block_number);
-            let mut engine = engine_factory(None, chain_spec)?;
+            let mut engine = engine_factory(chain_spec)?;
             let mut analysis_cache = AnalysisCache::default();
             let mut tracer = NoopTracer;
 

@@ -160,7 +160,7 @@ impl Sentry for SentryService {
 
     async fn peer_events(
         &self,
-        _: tonic::Request<PeerEventsRequest>,
+        _request: tonic::Request<PeerEventsRequest>,
     ) -> Result<Response<Self::PeerEventsStream>, tonic::Status> {
         let receiver = self.capability_server.peers_status_sender.subscribe();
         let stream = BroadcastStream::new(receiver)

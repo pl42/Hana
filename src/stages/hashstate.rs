@@ -274,7 +274,7 @@ mod tests {
         execution::{address::*, *},
         kv::new_mem_database,
         res::chainspec::MAINNET,
-        u256_to_h256, Buffer, StateWriter,
+        u256_to_h256, Buffer, State,
     };
     use hex_literal::*;
     use std::time::Instant;
