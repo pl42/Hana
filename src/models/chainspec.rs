@@ -8,7 +8,7 @@ use std::{
 
 type NodeUrl = String;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct BlockExecutionSpec {
     pub revision: Revision,
     pub active_transitions: HashSet<Revision>,
@@ -17,7 +17,8 @@ pub struct BlockExecutionSpec {
     pub balance_changes: HashMap<Address, U256>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ChainSpec {
     pub name: String,
     pub consensus: ConsensusParams,
@@ -38,6 +39,7 @@ impl ChainSpec {
         let mut revision = Revision::Frontier;
         let mut active_transitions = HashSet::new();
         for (fork, r) in [
+            (self.upgrades.paris, Revision::Paris),
             (self.upgrades.london, Revision::London),
             (self.upgrades.berlin, Revision::Berlin),
             (self.upgrades.istanbul, Revision::Istanbul),
@@ -97,6 +99,7 @@ impl ChainSpec {
             self.upgrades.istanbul,
             self.upgrades.berlin,
             self.upgrades.london,
+            // self.upgrades.paris,
         ]
         .iter()
         .copied()
@@ -105,6 +108,7 @@ impl ChainSpec {
         .chain(self.consensus.seal_verification.gather_forks())
         .chain(self.contracts.keys().copied())
         .chain(self.balances.keys().copied())
+        .chain(self.params.additional_forks.iter().copied())
         .collect::<BTreeSet<BlockNumber>>();
 
         forks.remove(&BlockNumber(0));
@@ -113,7 +117,7 @@ impl ChainSpec {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DifficultyBomb {
     pub delays: BTreeMap<BlockNumber, BlockNumber>,
 }
@@ -134,7 +138,7 @@ impl DifficultyBomb {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsensusParams {
     pub seal_verification: SealVerificationParams,
     #[serde(
@@ -149,7 +153,7 @@ pub fn switch_is_active(switch: Option<BlockNumber>, block_number: BlockNumber) 
     block_number >= switch.unwrap_or(BlockNumber(u64::MAX))
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SealVerificationParams {
     Clique {
         #[serde(deserialize_with = "deserialize_period_as_duration")]
@@ -180,6 +184,28 @@ pub enum SealVerificationParams {
         #[serde(default)]
         skip_pow_verification: bool,
     },
+    Beacon {
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "::serde_with::rust::unwrap_or_skip"
+        )]
+        terminal_total_difficulty: Option<U256>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "::serde_with::rust::unwrap_or_skip"
+        )]
+        terminal_block_hash: Option<H256>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "::serde_with::rust::unwrap_or_skip"
+        )]
+        terminal_block_number: Option<BlockNumber>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        block_reward: BTreeMap<BlockNumber, U256>,
+    },
 }
 
 impl SealVerificationParams {
@@ -203,13 +229,14 @@ impl SealVerificationParams {
                         .unwrap_or_default(),
                 )
                 .collect(),
+            SealVerificationParams::Beacon { .. } => BTreeSet::new(),
             _ => BTreeSet::new(),
         }
     }
 }
 
 // deserialize_str_as_u64
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Upgrades {
     #[serde(
         default,
@@ -265,22 +292,30 @@ pub struct Upgrades {
         with = "::serde_with::rust::unwrap_or_skip"
     )]
     pub london: Option<BlockNumber>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "::serde_with::rust::unwrap_or_skip"
+    )]
+    pub paris: Option<BlockNumber>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Params {
     pub chain_id: ChainId,
     pub network_id: NetworkId,
     pub min_gas_limit: u64,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub additional_forks: BTreeSet<BlockNumber>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlockScore {
     NoTurn = 1,
     InTurn = 2,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Seal {
     Ethash {
         #[serde(with = "hexbytes")]
@@ -336,7 +371,7 @@ impl Seal {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Genesis {
     pub number: BlockNumber,
     pub author: Address,
@@ -351,7 +386,7 @@ pub struct Genesis {
     pub base_fee_per_gas: Option<U256>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Contract {
     Contract {
         #[serde(with = "hexbytes")]
@@ -360,13 +395,13 @@ pub enum Contract {
     Precompile(Precompile),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModExpVersion {
     ModExp198,
     ModExp2565,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Precompile {
     EcRecover { base: u64, word: u64 },
     Sha256 { base: u64, word: u64 },
@@ -379,7 +414,7 @@ pub enum Precompile {
     Blake2F { gas_per_round: u64 },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct P2PParams {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bootnodes: Vec<NodeUrl>,
@@ -447,11 +482,13 @@ mod tests {
                     istanbul: Some(5435345.into()),
                     berlin: Some(8290928.into()),
                     london: Some(8897988.into()),
+                    paris: None,
                 },
                 params: Params {
                     chain_id: ChainId(4),
                     network_id: NetworkId(4),
                     min_gas_limit: 5000,
+                    additional_forks: BTreeSet::new(),
                 },
                 genesis: Genesis {
                     number: BlockNumber(0),
@@ -502,7 +539,7 @@ mod tests {
             MAINNET.gather_forks(),
             vec![
                 1_150_000, 1_920_000, 2_463_000, 2_675_000, 4_370_000, 7_280_000, 9_069_000,
-                9_200_000, 12_244_000, 12_965_000, 13_773_000
+                9_200_000, 12_244_000, 12_965_000, 13_773_000, 15_050_000
             ]
             .into_iter()
             .map(BlockNumber)

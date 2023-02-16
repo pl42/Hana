@@ -1,7 +1,7 @@
 #![feature(never_type)]
 use hana::{
     binutil::HanaDataDir,
-    consensus::engine_factory,
+    consensus::{engine_factory, Consensus, ForkChoiceMode},
     hex_to_bytes,
     kv::{
         tables::{self, CHAINDATA_TABLES},
@@ -116,7 +116,6 @@ async fn download_headers(
     uri: tonic::transport::Uri,
 ) -> anyhow::Result<()> {
     let chain_config = ChainConfig::new(chain.as_ref())?;
-    let consensus = engine_factory(chain_config.chain_spec.clone())?.into();
 
     let chain_data_dir = data_dir.chain_data_dir();
     let etl_temp_path = data_dir.etl_temp_dir();
@@ -124,10 +123,13 @@ async fn download_headers(
     let _ = std::fs::remove_dir_all(&etl_temp_path);
     std::fs::create_dir_all(&etl_temp_path)?;
     let env = Arc::new(hana::kv::new_database(&chain_data_dir)?);
+    let consensus: Arc<dyn Consensus> =
+        engine_factory(Some(env.clone()), chain_config.chain_spec.clone())?.into();
     let txn = env.begin_mutable()?;
     hana::genesis::initialize_genesis(
         &txn,
         &*Arc::new(tempfile::tempdir_in(etl_temp_path).context("failed to create ETL temp dir")?),
+        true,
         Some(chain_config.chain_spec.clone()),
     )?;
 
@@ -141,8 +143,9 @@ async fn download_headers(
     );
     tokio::spawn({
         let node = node.clone();
+        let tip_discovery = !matches!(consensus.fork_choice_mode(), ForkChoiceMode::External(_));
         async move {
-            node.start_sync().await.unwrap();
+            node.start_sync(tip_discovery).await.unwrap();
         }
     });
 
@@ -151,9 +154,8 @@ async fn download_headers(
         HeaderDownload {
             node,
             consensus,
-            requests: Default::default(),
             max_block: u64::MAX.into(),
-            graph: Default::default(),
+            increment: None,
         },
         false,
     );
