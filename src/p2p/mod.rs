@@ -19,7 +19,7 @@ pub mod collections {
     type Ancestor = H256;
 
     #[derive(Debug)]
-    pub struct ForkChoiceGraph {
+    pub struct Graph {
         head: Link,
         chains: LruCache<H256, (U256, Depth, Ancestor)>,
 
@@ -28,13 +28,13 @@ pub mod collections {
         q: LruCache<H256, ()>,
     }
 
-    impl Default for ForkChoiceGraph {
+    impl Default for Graph {
         fn default() -> Self {
             Self::new()
         }
     }
 
-    impl ForkChoiceGraph {
+    impl Graph {
         const CHAINS_CAP: usize = 1 << 8;
         const CACHE_CAP: usize = 3 << 16;
 
@@ -94,8 +94,7 @@ pub mod collections {
             self.insert_with_hash(hash, header);
         }
 
-        /// Find chain head using depth-first search algorithm.
-        pub fn chain_head(&mut self) -> Option<H256> {
+        pub fn dfs(&mut self) -> Option<H256> {
             let mut roots = HashSet::new();
 
             for (hash, _) in self.q.iter() {
@@ -160,7 +159,7 @@ pub mod collections {
         }
     }
 
-    impl Extend<BlockHeader> for ForkChoiceGraph {
+    impl Extend<BlockHeader> for Graph {
         fn extend<T>(&mut self, iter: T)
         where
             T: IntoIterator<Item = BlockHeader>,
@@ -171,7 +170,7 @@ pub mod collections {
         }
     }
 
-    impl Extend<(H256, BlockHeader)> for ForkChoiceGraph {
+    impl Extend<(H256, BlockHeader)> for Graph {
         fn extend<T>(&mut self, iter: T)
         where
             T: IntoIterator<Item = (H256, BlockHeader)>,
@@ -194,12 +193,12 @@ pub mod collections {
             const CANONICAL_EXTRA_DATA: &[u8] = b"canonical";
             const BETTER_CANONICAL_EXTRA_DATA: &[u8] = b"canonical+";
 
-            let mut graph = ForkChoiceGraph::new();
+            let mut graph = Graph::new();
             let mut forked_head = H256::default();
 
             let mut extra_data_cache = HashMap::new();
 
-            let insert_header = |graph: &mut ForkChoiceGraph,
+            let insert_header = |graph: &mut Graph,
                                  extra_data_cache: &mut HashMap<H256, Bytes>,
                                  header: BlockHeader,
                                  chain_parent_hash: &mut H256| {
@@ -224,7 +223,7 @@ pub mod collections {
                     &mut forked_head,
                 );
             }
-            assert_eq!(graph.chain_head().unwrap(), forked_head);
+            assert_eq!(graph.dfs().unwrap(), forked_head);
             assert_eq!(extra_data_cache[&forked_head], FORKED_EXTRA_DATA);
             for number in (10..20u64).map(BlockNumber) {
                 (insert_header)(
@@ -240,7 +239,7 @@ pub mod collections {
                     &mut forked_head,
                 );
             }
-            assert_eq!(graph.chain_head().unwrap(), forked_head);
+            assert_eq!(graph.dfs().unwrap(), forked_head);
             assert_eq!(extra_data_cache[&forked_head], FORKED_EXTRA_DATA);
 
             // Insert chain with higher difficulty.
@@ -260,7 +259,7 @@ pub mod collections {
                     &mut canonical_head,
                 );
             }
-            assert_eq!(graph.chain_head().unwrap(), canonical_head);
+            assert_eq!(graph.dfs().unwrap(), canonical_head);
             assert_eq!(extra_data_cache[&canonical_head], CANONICAL_EXTRA_DATA);
 
             // Insert more blocks from the forked chain.
@@ -278,7 +277,7 @@ pub mod collections {
                     &mut forked_head,
                 );
             }
-            assert_eq!(graph.chain_head().unwrap(), forked_head);
+            assert_eq!(graph.dfs().unwrap(), forked_head);
             assert_eq!(extra_data_cache[&forked_head], FORKED_EXTRA_DATA);
 
             let mut better_canonical_head = H256::default();
@@ -296,7 +295,7 @@ pub mod collections {
                     &mut better_canonical_head,
                 );
             }
-            assert_eq!(graph.chain_head().unwrap(), better_canonical_head);
+            assert_eq!(graph.dfs().unwrap(), better_canonical_head);
             assert_eq!(
                 extra_data_cache[&better_canonical_head],
                 BETTER_CANONICAL_EXTRA_DATA
