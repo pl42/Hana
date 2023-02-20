@@ -114,33 +114,19 @@ impl Node {
                                         .await;
                                 }
                             }
-                            Message::BlockHeaders(ref headers) => {
-                                if let Some(max_header) =
-                                    headers.headers.iter().max_by_key(|header| header.number)
-                                {
-                                    let _ = handler.sentries[sentry_id]
-                                        .clone()
-                                        .peer_min_block(PeerMinBlockRequest {
-                                            peer_id: Some(peer_id.into()),
-                                            min_block: max_header.number.0,
-                                        })
-                                        .await;
-                                }
-
+                            Message::BlockHeaders(ref headers)
                                 if requested.lock().remove(&headers.request_id).is_some()
-                                    && headers.headers.len() == 1
-                                {
-                                    let header = &headers.headers[0];
-                                    let hash = header.hash();
+                                    && headers.headers.len() == 1 =>
+                            {
+                                let header = &headers.headers[0];
+                                let hash = header.hash();
 
-                                    if header.number > block_number {
-                                        let _ =
-                                            handler.chain_tip_sender.send((header.number, hash));
-                                        for skip in 1..4_u64 {
-                                            let id = rand::thread_rng().gen::<u64>();
-                                            tx.send((id, PeerFilter::All, hash, skip)).await?;
-                                            requested.lock().insert(id, ());
-                                        }
+                                if header.number > block_number {
+                                    let _ = handler.chain_tip_sender.send((header.number, hash));
+                                    for skip in 1..4_u64 {
+                                        let id = rand::thread_rng().gen::<u64>();
+                                        tx.send((id, PeerFilter::All, hash, skip)).await?;
+                                        requested.lock().insert(id, ());
                                     }
                                 }
                             }
@@ -267,6 +253,7 @@ impl Node {
 
                 Ok::<(), anyhow::Error>(())
             }
+            .instrument(span!(Level::DEBUG, "inbound handler"))
         });
 
         pending::<()>().await;
