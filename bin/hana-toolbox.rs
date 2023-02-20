@@ -128,6 +128,7 @@ async fn download_headers(
     hana::genesis::initialize_genesis(
         &txn,
         &*Arc::new(tempfile::tempdir_in(etl_temp_path).context("failed to create ETL temp dir")?),
+        true,
         Some(chain_config.chain_spec.clone()),
     )?;
 
@@ -151,7 +152,6 @@ async fn download_headers(
         HeaderDownload {
             node,
             consensus,
-            requests: Default::default(),
             max_block: u64::MAX.into(),
             graph: Default::default(),
             increment: None,
