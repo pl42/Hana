@@ -7,14 +7,14 @@ use crate::{
     },
     kv::{mdbx::*, tables, MdbxWithDirHandle},
     models::*,
-    stagedsync::stages::{self, FINISH},
+    stagedsync::stages::FINISH,
     Buffer, IntraBlockState,
 };
 use anyhow::format_err;
 use async_trait::async_trait;
 use ethereum_jsonrpc::{
     types::{self, TransactionLog},
-    EthApiServer, LogFilter, SyncStatus,
+    EthApiServer, LogFilter,
 };
 use jsonrpsee::core::RpcResult;
 use std::sync::Arc;
@@ -522,24 +522,5 @@ where
                 .map(|body| body.uncles.len())
                 .unwrap_or(0),
         ))
-    }
-
-    async fn syncing(&self) -> RpcResult<SyncStatus> {
-        let txn = self.db.begin()?;
-
-        let highest_block = stages::HEADERS
-            .get_progress(&txn)?
-            .unwrap_or(BlockNumber(0));
-        let current_block = stages::FINISH.get_progress(&txn)?.unwrap_or(BlockNumber(0));
-
-        Ok(if current_block > 0 && current_block >= highest_block {
-            // Sync completed
-            SyncStatus::NotSyncing
-        } else {
-            SyncStatus::Syncing {
-                highest_block: highest_block.0.into(),
-                current_block: current_block.0.into(),
-            }
-        })
     }
 }
