@@ -31,6 +31,9 @@ use tracing::*;
 
 const STAGE_UPPER_BOUND: usize = 90_000;
 const REQUEST_INTERVAL: Duration = Duration::from_secs(10);
+const INTERVAL_TWEAK_STEP: Duration = Duration::from_secs(2);
+const MIN_SEND_INTERVAL: Duration = Duration::from_secs(2);
+const MAX_SEND_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub struct BodyDownload {
@@ -276,7 +279,6 @@ impl BodyDownload {
                                     let next_cycle_threshold = total_sent.load(Ordering::SeqCst) / 5;
                                     if *pending_responses_watch.borrow() < next_cycle_threshold {
                                         send_cycle_successful = true;
-                                        break;
                                     }
                                 }
                                 _ = &mut timeout => {
@@ -285,11 +287,11 @@ impl BodyDownload {
                             }
                         }
 
-                        if send_cycle_successful && send_interval > Duration::from_secs(2) {
-                            send_interval -= Duration::from_millis(250);
+                        if send_cycle_successful {
+                            send_interval = std::cmp::max(send_interval.saturating_sub(INTERVAL_TWEAK_STEP), MIN_SEND_INTERVAL);
                             debug!("Request cycle interval lowered to {send_interval:?}");
-                        } else if send_interval < Duration::from_secs(60) {
-                            send_interval += Duration::from_millis(250);
+                        } else {
+                            send_interval = std::cmp::min(send_interval.saturating_add(INTERVAL_TWEAK_STEP), MAX_SEND_INTERVAL);
                             debug!("Request cycle interval increased to {send_interval:?}");
                         }
 
@@ -406,14 +408,16 @@ impl BodyDownload {
                     },
                 );
 
-                info!(
-                    "Received {received} block bodies{}",
-                    if elapsed_sum > 0 {
-                        format!(" ({} blk/sec)", total_received_sum / elapsed_sum)
-                    } else {
-                        String::new()
-                    }
-                );
+                if received > 0 {
+                    info!(
+                        "Received {received} block bodies{}",
+                        if elapsed_sum > 0 {
+                            format!(" ({} blk/sec)", total_received_sum / elapsed_sum)
+                        } else {
+                            String::new()
+                        }
+                    );
+                }
             }
             bodies
         };
