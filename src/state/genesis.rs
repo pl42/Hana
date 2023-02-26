@@ -64,7 +64,6 @@ impl GenesisState {
 pub fn initialize_genesis<'db, E>(
     txn: &MdbxTransaction<'db, RW, E>,
     etl_temp_dir: &TempDir,
-    bundled_chain_spec: bool,
     chainspec: Option<ChainSpec>,
 ) -> anyhow::Result<(ChainSpec, bool)>
 where
@@ -73,14 +72,9 @@ where
     if let Some(existing_chainspec) = txn.get(tables::Config, ())? {
         if let Some(chainspec) = chainspec {
             if chainspec != existing_chainspec {
-                if bundled_chain_spec && chainspec.name == existing_chainspec.name {
-                    txn.set(tables::Config, (), chainspec.clone())?;
-                    return Ok((chainspec, true));
-                } else {
-                    return Err(format_err!(
-                        "Genesis initialized, but chainspec does not match one in database"
-                    ));
-                }
+                return Err(format_err!(
+                    "Genesis initialized, but chainspec does not match one in database"
+                ));
             }
         }
         return Ok((existing_chainspec, false));
@@ -200,7 +194,7 @@ mod tests {
 
             let temp_dir = TempDir::new().unwrap();
             assert!(
-                initialize_genesis(&tx, &temp_dir, false, Some((*chainspec).clone()))
+                initialize_genesis(&tx, &temp_dir, Some((*chainspec).clone()))
                     .unwrap()
                     .1
             );

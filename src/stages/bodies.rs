@@ -276,6 +276,7 @@ impl BodyDownload {
                                     let next_cycle_threshold = total_sent.load(Ordering::SeqCst) / 5;
                                     if *pending_responses_watch.borrow() < next_cycle_threshold {
                                         send_cycle_successful = true;
+                                        break;
                                     }
                                 }
                                 _ = &mut timeout => {
@@ -405,16 +406,14 @@ impl BodyDownload {
                     },
                 );
 
-                if received > 0 {
-                    info!(
-                        "Received {received} block bodies{}",
-                        if elapsed_sum > 0 {
-                            format!(" ({} blk/sec)", total_received_sum / elapsed_sum)
-                        } else {
-                            String::new()
-                        }
-                    );
-                }
+                info!(
+                    "Received {received} block bodies{}",
+                    if elapsed_sum > 0 {
+                        format!(" ({} blk/sec)", total_received_sum / elapsed_sum)
+                    } else {
+                        String::new()
+                    }
+                );
             }
             bodies
         };
