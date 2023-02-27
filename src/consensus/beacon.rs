@@ -172,7 +172,7 @@ impl Consensus for BeaconConsensus {
     fn pre_validate_block(
         &self,
         block: &crate::models::Block,
-        _: &dyn crate::BlockReader,
+        _: &dyn crate::BlockState,
     ) -> Result<(), super::DuoError> {
         self.base.pre_validate_block(block)
     }
