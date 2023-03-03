@@ -275,23 +275,21 @@ where
         initial: U256,
         current: U256,
     ) -> anyhow::Result<()> {
-        if current == initial {
-            return Ok(());
+        if initial != current {
+            self.changed_storage.insert(address);
+            self.storage_changes
+                .entry(self.block_number)
+                .or_default()
+                .entry(address)
+                .or_default()
+                .insert(location, initial);
+
+            self.storage
+                .entry(address)
+                .or_default()
+                .slots
+                .insert(location, current);
         }
-
-        self.changed_storage.insert(address);
-        self.storage_changes
-            .entry(self.block_number)
-            .or_default()
-            .entry(address)
-            .or_default()
-            .insert(location, initial);
-
-        self.storage
-            .entry(address)
-            .or_default()
-            .slots
-            .insert(location, current);
 
         Ok(())
     }

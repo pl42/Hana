@@ -12,6 +12,7 @@ use crate::{
     trie::root_hash,
     HeaderReader, State, StateReader,
 };
+use bytes::Bytes;
 use std::cmp::min;
 use TransactionAction;
 
@@ -71,7 +72,7 @@ pub fn execute_transaction<'r, S>(
     cumulative_gas_used: &mut u64,
     message: &Message,
     sender: Address,
-) -> Result<Receipt, DuoError>
+) -> Result<(Bytes, Receipt), DuoError>
 where
     S: HeaderReader + StateReader,
 {
@@ -155,13 +156,16 @@ where
 
     *cumulative_gas_used += gas_used;
 
-    Ok(Receipt {
-        tx_type: message.tx_type(),
-        success: vm_res.status_code == StatusCode::Success,
-        cumulative_gas_used: *cumulative_gas_used,
-        bloom: logs_bloom(state.logs()),
-        logs: state.logs().to_vec(),
-    })
+    Ok((
+        vm_res.output_data,
+        Receipt {
+            tx_type: message.tx_type(),
+            success: vm_res.status_code == StatusCode::Success,
+            cumulative_gas_used: *cumulative_gas_used,
+            bloom: logs_bloom(state.logs()),
+            logs: state.logs().to_vec(),
+        },
+    ))
 }
 
 #[derive(Debug)]
@@ -297,6 +301,7 @@ where
             message,
             sender,
         )
+        .map(|(_, receipt)| receipt)
     }
 
     pub fn execute_block_no_post_validation_while(
@@ -403,7 +408,7 @@ where
     pub fn execute_and_write_block(mut self) -> Result<Vec<Receipt>, DuoError> {
         let receipts = self.execute_and_check_block()?;
 
-        self.state.write_to_db(self.header.number)?;
+        self.state.write_to_state(self.header.number)?;
 
         Ok(receipts)
     }
@@ -789,7 +794,7 @@ mod tests {
         // out of gas
         assert!(!receipt.success);
 
-        processor.into_state().write_to_db(block_number).unwrap();
+        processor.into_state().write_to_state(block_number).unwrap();
 
         // only the caller and the miner should change
         assert_eq!(state.read_account(address).unwrap(), Some(account));
@@ -842,7 +847,7 @@ mod tests {
         let receipt = processor.execute_transaction(&message, caller).unwrap();
         assert!(receipt.success);
 
-        processor.into_state().write_to_db(block_number).unwrap();
+        processor.into_state().write_to_state(block_number).unwrap();
 
         // suicide_beneficiary should've been touched and deleted
         assert_eq!(state.read_account(suicide_beneficiary).unwrap(), None);
