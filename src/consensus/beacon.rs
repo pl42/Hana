@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     kv::{mdbx::*, MdbxWithDirHandle},
     models::*,
-    rpc::{eth::EthApiServerImpl, net::NetApiServerImpl},
+    rpc::{eth::EthApiServerImpl, net::NetApiServerImpl, web3::Web3ApiServerImpl},
     TaskGuard,
 };
 use async_trait::async_trait;
@@ -92,6 +92,7 @@ impl BeaconConsensus {
     pub fn new(
         db: Option<Arc<MdbxWithDirHandle<WriteMap>>>,
         chain_id: ChainId,
+        network_id: NetworkId,
         eip1559_block: Option<BlockNumber>,
         block_reward: BlockRewardSchedule,
         terminal_total_difficulty: Option<U256>,
@@ -103,7 +104,7 @@ impl BeaconConsensus {
             finalized_block: H256::zero(),
         });
         Self {
-            base: ConsensusEngineBase::new(chain_id, eip1559_block),
+            base: ConsensusEngineBase::new(chain_id, eip1559_block, None),
             block_reward,
             since: terminal_block_number.unwrap_or_default() + 1,
             receiver,
@@ -151,7 +152,9 @@ impl BeaconConsensus {
                         .into_rpc(),
                     )
                     .unwrap();
-                    api.merge(NetApiServerImpl.into_rpc()).unwrap();
+                    api.merge(NetApiServerImpl { network_id }.into_rpc())
+                        .unwrap();
+                    api.merge(Web3ApiServerImpl.into_rpc()).unwrap();
 
                     let server_handle = server.start(api).unwrap();
 
@@ -209,7 +212,7 @@ impl Consensus for BeaconConsensus {
 
     fn finalize(
         &self,
-        header: &crate::models::PartialHeader,
+        header: &crate::models::BlockHeader,
         ommers: &[crate::models::BlockHeader],
     ) -> anyhow::Result<Vec<super::FinalizationChange>> {
         let mut changes = Vec::with_capacity(1 + ommers.len());

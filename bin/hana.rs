@@ -6,7 +6,7 @@ use hana::{
     p2p::node::NodeBuilder,
     rpc::{
         erigon::ErigonApiServerImpl, eth::EthApiServerImpl, net::NetApiServerImpl,
-        otterscan::OtterscanApiServerImpl, trace::TraceApiServerImpl,
+        otterscan::OtterscanApiServerImpl, trace::TraceApiServerImpl, web3::Web3ApiServerImpl,
     },
     stagedsync::{
         self,
@@ -18,7 +18,7 @@ use hana::{
 use anyhow::Context;
 use clap::Parser;
 use ethereum_jsonrpc::{
-    ErigonApiServer, EthApiServer, NetApiServer, OtterscanApiServer, TraceApiServer,
+    ErigonApiServer, EthApiServer, NetApiServer, OtterscanApiServer, TraceApiServer, Web3ApiServer,
 };
 use http::Uri;
 use jsonrpsee::{core::server::rpc_module::Methods, http_server::HttpServerBuilder};
@@ -170,6 +170,8 @@ fn main() -> anyhow::Result<()> {
                 let consensus: Arc<dyn Consensus> =
                     engine_factory(Some(db.clone()), chainspec.clone())?.into();
 
+                let network_id = chainspec.params.network_id;
+
                 let chain_config = ChainConfig::from(chainspec);
 
                 if !opt.no_rpc {
@@ -191,7 +193,8 @@ fn main() -> anyhow::Result<()> {
                                 .into_rpc(),
                             )
                             .unwrap();
-                            api.merge(NetApiServerImpl.into_rpc()).unwrap();
+                            api.merge(NetApiServerImpl { network_id }.into_rpc())
+                                .unwrap();
                             api.merge(ErigonApiServerImpl { db: db.clone() }.into_rpc())
                                 .unwrap();
                             api.merge(OtterscanApiServerImpl { db: db.clone() }.into_rpc())
@@ -204,6 +207,7 @@ fn main() -> anyhow::Result<()> {
                                 .into_rpc(),
                             )
                             .unwrap();
+                            api.merge(Web3ApiServerImpl.into_rpc()).unwrap();
 
                             let _server_handle = server.start(api).unwrap();
 

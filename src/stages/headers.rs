@@ -140,28 +140,25 @@ where
                 }
                 ForkChoiceMode::Difficulty(fork_choice_graph) => {
                     // Forward download mode
-                    let starting_block: BlockNumber = prev_progress + 1;
                     let mut chain_tip = self.node.chain_tip.clone();
                     let current_chain_tip = loop {
                         let _ = chain_tip.changed().await;
                         let (n, _) = *chain_tip.borrow();
-                        if n >= starting_block {
+                        if n > prev_progress {
                             break n;
                         }
                     };
 
                     debug!("Chain tip={}", current_chain_tip);
 
-                    let max_increment = self
-                        .increment
-                        .map(|v| std::cmp::min(v, STAGE_UPPER_BOUND))
-                        .unwrap_or(STAGE_UPPER_BOUND);
-                    let (mut target_block, mut reached_tip) =
-                        if starting_block + max_increment > current_chain_tip {
-                            (current_chain_tip, true)
-                        } else {
-                            (starting_block + max_increment, false)
-                        };
+                    let (mut target_block, mut reached_tip) = Self::forward_set_target_block(
+                        prev_progress,
+                        self.increment,
+                        current_chain_tip,
+                    );
+
+                    let starting_block: BlockNumber = prev_progress + 1;
+
                     if target_block >= self.max_block {
                         target_block = self.max_block;
                         reached_tip = true;
@@ -444,7 +441,7 @@ impl HeaderDownload {
         start: BlockNumber,
         end: BlockNumber,
     ) -> anyhow::Result<Option<Vec<(H256, BlockHeader)>>> {
-        let requests = Arc::new(self.prepare_requests(start, end));
+        let requests = Arc::new(Self::prepare_requests(start, end));
 
         info!(
             "Will download {} headers over {} requests",
@@ -586,18 +583,34 @@ impl HeaderDownload {
         Ok(())
     }
 
+    fn forward_set_target_block(
+        prev_progress: BlockNumber,
+        increment: Option<BlockNumber>,
+        chain_tip: BlockNumber,
+    ) -> (BlockNumber, bool) {
+        let max_increment = std::cmp::max(
+            BlockNumber(1),
+            increment
+                .map(|v| std::cmp::min(v, STAGE_UPPER_BOUND))
+                .unwrap_or(STAGE_UPPER_BOUND),
+        );
+        let max_incremented_from_start = BlockNumber(prev_progress.0 + max_increment.0);
+
+        if max_incremented_from_start > chain_tip {
+            (chain_tip, true)
+        } else {
+            (max_incremented_from_start, false)
+        }
+    }
+
     fn prepare_requests(
-        &self,
         starting_block: BlockNumber,
         target: BlockNumber,
     ) -> DashMap<BlockNumber, HeaderRequest> {
         (starting_block..=target)
             .step_by(HEADERS_UPPER_BOUND)
             .map(|start| {
-                let limit = std::cmp::max(
-                    std::cmp::min(*target - *start, HEADERS_UPPER_BOUND as u64),
-                    1,
-                );
+                let limit = std::cmp::min(*target - *start + 1, HEADERS_UPPER_BOUND as u64);
 
                 let request = HeaderRequest {
                     start: BlockId::Number(start),
@@ -658,6 +671,65 @@ impl HeaderDownload {
         let valid_till = valid_till.load(Ordering::SeqCst);
         if valid_till != 0 {
             headers.truncate(valid_till);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepare_requests() {
+        for (from, to, requests) in [
+            (1000, 1000, vec![(1000, 1)]),
+            (1000, 3047, vec![(1000, 1024), (2024, 1024)]),
+            (1000, 3048, vec![(1000, 1024), (2024, 1024), (3048, 1)]),
+            (
+                1000,
+                5000,
+                vec![(1000, 1024), (2024, 1024), (3048, 1024), (4072, 929)],
+            ),
+        ] {
+            assert_eq!(
+                HeaderDownload::prepare_requests(from.into(), to.into())
+                    .into_iter()
+                    .collect::<BTreeMap<_, _>>(),
+                requests
+                    .into_iter()
+                    .map(|(start, limit)| {
+                        let start = BlockNumber(start);
+                        (
+                            start,
+                            HeaderRequest {
+                                start: BlockId::Number(start),
+                                limit,
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .collect()
+            )
+        }
+    }
+
+    #[test]
+    fn forward_set_target_block() {
+        for ((prev_progress, increment, chain_tip), (expected_target, expected_reached_tip)) in [
+            ((10_000, Some(1_000_000), 2_000_000), (100_000, false)),
+            ((10_000, Some(10_000), 2_000_000), (20_000, false)),
+            ((10_000, Some(10_000), 15_000), (15_000, true)),
+            ((10_000, None, 2_000_000), (100_000, false)),
+            ((10_000, None, 30_000), (30_000, true)),
+        ] {
+            assert_eq!(
+                HeaderDownload::forward_set_target_block(
+                    BlockNumber(prev_progress),
+                    increment.map(BlockNumber),
+                    BlockNumber(chain_tip)
+                ),
+                (BlockNumber(expected_target), expected_reached_tip)
+            );
         }
     }
 }
