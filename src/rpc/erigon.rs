@@ -21,57 +21,51 @@ where
     DB: EnvironmentKind,
 {
     async fn get_header_by_number(&self, block_number: u64) -> RpcResult<Option<types::Header>> {
-        let db = self.db.clone();
+        let tx = self.db.begin()?;
 
-        tokio::task::spawn_blocking(move || {
-            let tx = db.begin()?;
-
-            if let Some((block_number, hash)) =
-                helpers::resolve_block_id(&tx, types::BlockNumber::Number(block_number.into()))?
+        if let Some((block_number, hash)) =
+            helpers::resolve_block_id(&tx, types::BlockNumber::Number(block_number.into()))?
+        {
+            if let Some(BlockHeader {
+                parent_hash,
+                ommers_hash,
+                beneficiary,
+                state_root,
+                transactions_root,
+                receipts_root,
+                logs_bloom,
+                difficulty,
+                number,
+                gas_limit,
+                gas_used,
+                timestamp,
+                extra_data,
+                mix_hash,
+                nonce,
+                base_fee_per_gas,
+            }) = crate::accessors::chain::header::read(&tx, hash, block_number)?
             {
-                if let Some(BlockHeader {
+                return Ok(Some(types::Header {
                     parent_hash,
-                    ommers_hash,
-                    beneficiary,
+                    sha3_uncles: ommers_hash,
+                    miner: beneficiary,
                     state_root,
                     transactions_root,
                     receipts_root,
                     logs_bloom,
                     difficulty,
-                    number,
-                    gas_limit,
-                    gas_used,
-                    timestamp,
-                    extra_data,
+                    number: number.0.into(),
+                    gas_limit: gas_limit.into(),
+                    gas_used: gas_used.into(),
+                    timestamp: timestamp.into(),
+                    extra_data: extra_data.into(),
                     mix_hash,
                     nonce,
                     base_fee_per_gas,
-                }) = crate::accessors::chain::header::read(&tx, hash, block_number)?
-                {
-                    return Ok(Some(types::Header {
-                        parent_hash,
-                        sha3_uncles: ommers_hash,
-                        miner: beneficiary,
-                        state_root,
-                        transactions_root,
-                        receipts_root,
-                        logs_bloom,
-                        difficulty,
-                        number: number.0.into(),
-                        gas_limit: gas_limit.into(),
-                        gas_used: gas_used.into(),
-                        timestamp: timestamp.into(),
-                        extra_data: extra_data.into(),
-                        mix_hash,
-                        nonce,
-                        base_fee_per_gas,
-                    }));
-                }
+                }));
             }
+        }
 
-            Ok(None)
-        })
-        .await
-        .unwrap_or_else(helpers::joinerror_to_result)
+        Ok(None)
     }
 }

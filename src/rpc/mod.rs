@@ -3,7 +3,6 @@ pub mod eth;
 pub mod net;
 pub mod otterscan;
 pub mod trace;
-pub mod web3;
 pub mod helpers {
     use crate::{
         accessors::chain,
@@ -20,7 +19,6 @@ pub mod helpers {
     use ethereum_jsonrpc::types;
     use ethereum_types::U64;
     use jsonrpsee::core::Error as RpcError;
-    use tokio::task::JoinError;
 
     impl From<DuoError> for RpcError {
         fn from(e: DuoError) -> Self {
@@ -43,10 +41,6 @@ pub mod helpers {
                 slots: storage_keys.into_iter().collect(),
             }
         }
-    }
-
-    pub fn joinerror_to_result<T>(e: JoinError) -> Result<T, RpcError> {
-        Err(RpcError::Custom(format!("{e}")))
     }
 
     pub fn new_jsonrpc_tx(

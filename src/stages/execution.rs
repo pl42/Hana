@@ -316,19 +316,8 @@ where
             storage_cs_cursor.delete_current()?;
         }
 
-        info!("Unwinding log indexes");
-        unwind_by_block_key_duplicates(
-            tx,
-            tables::LogTopicsByBlock,
-            input,
-            std::convert::identity,
-        )?;
-        unwind_by_block_key_duplicates(
-            tx,
-            tables::LogAddressesByBlock,
-            input,
-            std::convert::identity,
-        )?;
+        info!("Unwinding logs");
+        unwind_by_block_key(tx, tables::Log, input, |(block_number, _)| block_number)?;
 
         info!("Unwinding call trace sets");
         unwind_by_block_key_duplicates(tx, tables::CallTraceSet, input, std::convert::identity)?;
@@ -353,13 +342,7 @@ where
             input,
             |tables::StorageChangeKey { block_number, .. }| block_number,
         )?;
-        prune_by_block_key_duplicates(
-            tx,
-            tables::LogAddressesByBlock,
-            input,
-            std::convert::identity,
-        )?;
-        prune_by_block_key_duplicates(tx, tables::LogTopicsByBlock, input, std::convert::identity)?;
+        prune_by_block_key(tx, tables::Log, input, |(block_number, _)| block_number)?;
         prune_by_block_key_duplicates(tx, tables::CallTraceSet, input, std::convert::identity)?;
 
         Ok(())

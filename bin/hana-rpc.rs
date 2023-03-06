@@ -4,13 +4,12 @@ use hana::{
     kv::{mdbx::*, MdbxWithDirHandle},
     rpc::{
         erigon::ErigonApiServerImpl, eth::EthApiServerImpl, net::NetApiServerImpl,
-        otterscan::OtterscanApiServerImpl, trace::TraceApiServerImpl, web3::Web3ApiServerImpl,
+        otterscan::OtterscanApiServerImpl, trace::TraceApiServerImpl,
     },
 };
-use anyhow::format_err;
 use clap::Parser;
 use ethereum_jsonrpc::{
-    ErigonApiServer, EthApiServer, NetApiServer, OtterscanApiServer, TraceApiServer, Web3ApiServer,
+    ErigonApiServer, EthApiServer, NetApiServer, OtterscanApiServer, TraceApiServer,
 };
 use jsonrpsee::{core::server::rpc_module::Methods, http_server::HttpServerBuilder};
 use std::{future::pending, net::SocketAddr, sync::Arc};
@@ -41,11 +40,6 @@ async fn main() -> anyhow::Result<()> {
         .into(),
     );
 
-    let network_id = hana::accessors::chain::chain_config::read(&db.begin()?)?
-        .ok_or_else(|| format_err!("no chainspec found"))?
-        .params
-        .network_id;
-
     let server = HttpServerBuilder::default()
         .build(opt.listen_address)
         .await?;
@@ -59,8 +53,7 @@ async fn main() -> anyhow::Result<()> {
         .into_rpc(),
     )
     .unwrap();
-    api.merge(NetApiServerImpl { network_id }.into_rpc())
-        .unwrap();
+    api.merge(NetApiServerImpl.into_rpc()).unwrap();
     api.merge(ErigonApiServerImpl { db: db.clone() }.into_rpc())
         .unwrap();
     api.merge(OtterscanApiServerImpl { db: db.clone() }.into_rpc())
@@ -73,7 +66,6 @@ async fn main() -> anyhow::Result<()> {
         .into_rpc(),
     )
     .unwrap();
-    api.merge(Web3ApiServerImpl.into_rpc()).unwrap();
 
     let _server_handle = server.start(api)?;
 
