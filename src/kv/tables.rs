@@ -6,10 +6,11 @@ use arrayvec::ArrayVec;
 use bytes::Bytes;
 use croaring::{treemap::NativeSerializer, Treemap as RoaringTreemap};
 use derive_more::*;
+use maplit::hashmap;
 use modular_bitfield::prelude::*;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, *};
-use std::{collections::BTreeMap, fmt::Display, sync::Arc};
+use std::{collections::HashMap, fmt::Display, sync::Arc};
 
 #[derive(Debug)]
 pub struct ErasedTable<T>(pub T)
@@ -325,6 +326,7 @@ macro_rules! scale_table_object {
 scale_table_object!(BodyForStorage);
 scale_table_object!(BlockHeader);
 scale_table_object!(MessageWithSignature);
+scale_table_object!(Vec<crate::models::Log>);
 
 macro_rules! ron_table_object {
     ($ty:ident) => {
@@ -385,36 +387,7 @@ impl TableDecode for Vec<Address> {
         let mut v = Vec::with_capacity(b.len() / ADDRESS_LENGTH);
         for i in 0..b.len() / ADDRESS_LENGTH {
             let offset = i * ADDRESS_LENGTH;
-            v.push(TableDecode::decode(&b[offset..offset + ADDRESS_LENGTH])?);
-        }
-
-        Ok(v)
-    }
-}
-
-impl TableEncode for Vec<H256> {
-    type Encoded = Vec<u8>;
-
-    fn encode(self) -> Self::Encoded {
-        let mut v = Vec::with_capacity(self.len() * KECCAK_LENGTH);
-        for addr in self {
-            v.extend_from_slice(&addr.encode());
-        }
-
-        v
-    }
-}
-
-impl TableDecode for Vec<H256> {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        if b.len() % KECCAK_LENGTH != 0 {
-            bail!("Slice len should be divisible by {}", KECCAK_LENGTH);
-        }
-
-        let mut v = Vec::with_capacity(b.len() / KECCAK_LENGTH);
-        for i in 0..b.len() / KECCAK_LENGTH {
-            let offset = i * KECCAK_LENGTH;
-            v.push(TableDecode::decode(&b[offset..offset + KECCAK_LENGTH])?);
+            v.push(Address::decode(&b[offset..offset + ADDRESS_LENGTH])?);
         }
 
         Ok(v)
@@ -624,12 +597,6 @@ impl DupSort for HashedStorage {
 impl DupSort for CallTraceSet {
     type SeekBothKey = Vec<u8>;
 }
-impl DupSort for LogAddressesByBlock {
-    type SeekBothKey = Address;
-}
-impl DupSort for LogTopicsByBlock {
-    type SeekBothKey = H256;
-}
 
 pub type AccountChangeKey = BlockNumber;
 
@@ -807,6 +774,9 @@ decl_table!(StorageHistory => BitmapKey<(Address, H256)> => RoaringTreemap);
 decl_table!(Code => H256 => Bytes);
 decl_table!(TrieAccount => Vec<u8> => Vec<u8>);
 decl_table!(TrieStorage => Vec<u8> => Vec<u8>);
+decl_table!(DbInfo => Vec<u8> => Vec<u8>);
+decl_table!(SnapshotInfo => Vec<u8> => Vec<u8>);
+decl_table!(BittorrentInfo => Vec<u8> => Vec<u8>);
 decl_table!(HeaderNumber => H256 => BlockNumber);
 decl_table!(CanonicalHeader => BlockNumber => H256);
 decl_table!(Header => HeaderKey => BlockHeader => BlockNumber);
@@ -815,10 +785,9 @@ decl_table!(BlockBody => HeaderKey => BodyForStorage => BlockNumber);
 decl_table!(BlockTransaction => TxIndex => MessageWithSignature);
 decl_table!(TotalGas => BlockNumber => u64);
 decl_table!(TotalTx => BlockNumber => u64);
-decl_table!(LogAddressIndex => Address => RoaringTreemap);
-decl_table!(LogAddressesByBlock => BlockNumber => Address);
-decl_table!(LogTopicIndex => H256 => RoaringTreemap);
-decl_table!(LogTopicsByBlock => BlockNumber => H256);
+decl_table!(Log => (BlockNumber, TxIndex) => Vec<crate::models::Log>);
+decl_table!(LogTopicIndex => Vec<u8> => RoaringTreemap);
+decl_table!(LogAddressIndex => Vec<u8> => RoaringTreemap);
 decl_table!(CallTraceSet => BlockNumber => CallTraceSetEntry);
 decl_table!(CallFromIndex => BitmapKey<Address> => RoaringTreemap);
 decl_table!(CallToIndex => BitmapKey<Address> => RoaringTreemap);
@@ -827,62 +796,65 @@ decl_table!(Config => () => ChainSpec);
 decl_table!(SyncStage => StageId => BlockNumber);
 decl_table!(PruneProgress => StageId => BlockNumber);
 decl_table!(TxSender => HeaderKey => Vec<Address>);
+decl_table!(LastBlock => Vec<u8> => Vec<u8>);
+decl_table!(Migration => Vec<u8> => Vec<u8>);
+decl_table!(Sequence => Vec<u8> => Vec<u8>);
 decl_table!(LastHeader => () => HeaderKey);
 decl_table!(Issuance => Vec<u8> => Vec<u8>);
 
-pub type DatabaseChart = Arc<BTreeMap<&'static str, TableInfo>>;
+pub type DatabaseChart = Arc<HashMap<&'static str, TableInfo>>;
 
-macro_rules! table_entry {
-    ($t:ty) => {
-        (
-            <$t>::const_db_name(),
-            TableInfo {
-                dup_sort: impls::impls!($t: DupSort),
-            },
-        )
-    };
-}
-
-pub static CHAINDATA_TABLES: Lazy<Arc<BTreeMap<&'static str, TableInfo>>> = Lazy::new(|| {
-    Arc::new(
-        [
-            table_entry!(Account),
-            table_entry!(Storage),
-            table_entry!(AccountChangeSet),
-            table_entry!(StorageChangeSet),
-            table_entry!(HashedAccount),
-            table_entry!(HashedStorage),
-            table_entry!(AccountHistory),
-            table_entry!(StorageHistory),
-            table_entry!(Code),
-            table_entry!(TrieAccount),
-            table_entry!(TrieStorage),
-            table_entry!(HeaderNumber),
-            table_entry!(CanonicalHeader),
-            table_entry!(Header),
-            table_entry!(HeadersTotalDifficulty),
-            table_entry!(BlockBody),
-            table_entry!(BlockTransaction),
-            table_entry!(TotalGas),
-            table_entry!(TotalTx),
-            table_entry!(LogAddressIndex),
-            table_entry!(LogAddressesByBlock),
-            table_entry!(LogTopicIndex),
-            table_entry!(LogTopicsByBlock),
-            table_entry!(CallTraceSet),
-            table_entry!(CallFromIndex),
-            table_entry!(CallToIndex),
-            table_entry!(BlockTransactionLookup),
-            table_entry!(Config),
-            table_entry!(SyncStage),
-            table_entry!(PruneProgress),
-            table_entry!(TxSender),
-            table_entry!(LastHeader),
-            table_entry!(Issuance),
-        ]
-        .into_iter()
-        .collect(),
-    )
+pub static CHAINDATA_TABLES: Lazy<Arc<HashMap<&'static str, TableInfo>>> = Lazy::new(|| {
+    Arc::new(hashmap! {
+        Account::const_db_name() => TableInfo::default(),
+        Storage::const_db_name() => TableInfo {
+            dup_sort: true,
+        },
+        AccountChangeSet::const_db_name() => TableInfo {
+            dup_sort: true,
+        },
+        StorageChangeSet::const_db_name() => TableInfo {
+            dup_sort: true,
+        },
+        HashedAccount::const_db_name() => TableInfo::default(),
+        HashedStorage::const_db_name() => TableInfo {
+            dup_sort: true,
+        },
+        AccountHistory::const_db_name() => TableInfo::default(),
+        StorageHistory::const_db_name() => TableInfo::default(),
+        Code::const_db_name() => TableInfo::default(),
+        TrieAccount::const_db_name() => TableInfo::default(),
+        TrieStorage::const_db_name() => TableInfo::default(),
+        DbInfo::const_db_name() => TableInfo::default(),
+        SnapshotInfo::const_db_name() => TableInfo::default(),
+        BittorrentInfo::const_db_name() => TableInfo::default(),
+        HeaderNumber::const_db_name() => TableInfo::default(),
+        CanonicalHeader::const_db_name() => TableInfo::default(),
+        Header::const_db_name() => TableInfo::default(),
+        HeadersTotalDifficulty::const_db_name() => TableInfo::default(),
+        BlockBody::const_db_name() => TableInfo::default(),
+        BlockTransaction::const_db_name() => TableInfo::default(),
+        TotalGas::const_db_name() => TableInfo::default(),
+        TotalTx::const_db_name() => TableInfo::default(),
+        Log::const_db_name() => TableInfo::default(),
+        LogTopicIndex::const_db_name() => TableInfo::default(),
+        LogAddressIndex::const_db_name() => TableInfo::default(),
+        CallTraceSet::const_db_name() => TableInfo {
+            dup_sort: true,
+        },
+        CallFromIndex::const_db_name() => TableInfo::default(),
+        CallToIndex::const_db_name() => TableInfo::default(),
+        BlockTransactionLookup::const_db_name() => TableInfo::default(),
+        Config::const_db_name() => TableInfo::default(),
+        SyncStage::const_db_name() => TableInfo::default(),
+        PruneProgress::const_db_name() => TableInfo::default(),
+        TxSender::const_db_name() => TableInfo::default(),
+        LastBlock::const_db_name() => TableInfo::default(),
+        Migration::const_db_name() => TableInfo::default(),
+        Sequence::const_db_name() => TableInfo::default(),
+        LastHeader::const_db_name() => TableInfo::default(),
+        Issuance::const_db_name() => TableInfo::default(),
+    })
 });
 
 #[cfg(test)]
@@ -906,8 +878,24 @@ mod tests {
     }
 
     #[test]
-    fn table_meta() {
-        assert!(!CHAINDATA_TABLES[tables::Account::const_db_name()].dup_sort);
-        assert!(CHAINDATA_TABLES[tables::Storage::const_db_name()].dup_sort);
+    fn log() {
+        let input = vec![
+            crate::models::Log {
+                address: Address::from([0; 20]),
+                topics: vec![H256([1; 32]), H256([2; 32])],
+                data: hex!("BAADCAFE").to_vec().into(),
+            },
+            crate::models::Log {
+                address: Address::from([1; 20]),
+                topics: vec![H256([3; 32]), H256([4; 32])],
+                data: hex!("DEADBEEF").to_vec().into(),
+            },
+        ];
+
+        let encoded = input.clone().encode();
+
+        println!("{}", hex::encode(&encoded));
+
+        assert_eq!(Vec::<crate::models::Log>::decode(&encoded).unwrap(), input);
     }
 }
