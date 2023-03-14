@@ -1,10 +1,23 @@
 use derive_more::*;
 use directories::ProjectDirs;
-use std::{fmt::Display, path::PathBuf};
+use std::{fmt::Display, path::PathBuf, str::FromStr};
+
+#[derive(AsRef, Clone, Debug, Deref, DerefMut, From)]
+#[as_ref(forward)]
+#[from(forward)]
+pub struct ExpandedPathBuf(pub PathBuf);
+
+impl FromStr for ExpandedPathBuf {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(PathBuf::from_str(&shellexpand::full(s)?)?))
+    }
+}
 
 #[derive(Clone, Debug, Deref, DerefMut, FromStr)]
 
-pub struct HanaDataDir(pub PathBuf);
+pub struct HanaDataDir(pub ExpandedPathBuf);
 
 impl HanaDataDir {
     pub fn chain_data_dir(&self) -> PathBuf {
@@ -22,11 +35,11 @@ impl HanaDataDir {
 
 impl Default for HanaDataDir {
     fn default() -> Self {
-        Self(
+        Self(ExpandedPathBuf(
             ProjectDirs::from("", "", "Hana")
                 .map(|pd| pd.data_dir().to_path_buf())
                 .unwrap_or_else(|| "data".into()),
-        )
+        ))
     }
 }
 
