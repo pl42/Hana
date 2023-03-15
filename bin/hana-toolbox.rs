@@ -1,6 +1,6 @@
 #![feature(never_type)]
 use hana::{
-    binutil::{HanaDataDir, ExpandedPathBuf},
+    binutil::HanaDataDir,
     consensus::{engine_factory, Consensus, ForkChoiceMode},
     hex_to_bytes,
     kv::{
@@ -15,7 +15,7 @@ use hana::{
 use anyhow::{ensure, format_err, Context};
 use bytes::Bytes;
 use clap::Parser;
-use std::{borrow::Cow, collections::BTreeMap, io::Read, sync::Arc};
+use std::{borrow::Cow, collections::BTreeMap, io::Read, path::PathBuf, sync::Arc};
 use tokio::pin;
 use tracing::*;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -60,9 +60,9 @@ pub enum OptCommand {
     /// Check table equality in two databases
     CheckEqual {
         #[clap(long, parse(from_os_str))]
-        db1: ExpandedPathBuf,
+        db1: PathBuf,
         #[clap(long, parse(from_os_str))]
-        db2: ExpandedPathBuf,
+        db2: PathBuf,
         #[clap(long)]
         table: String,
     },
@@ -111,7 +111,7 @@ pub enum OptCommand {
 
     /// Overwrite chainspec in database with user-provided one
     OverwriteChainspec {
-        chainspec_file: ExpandedPathBuf,
+        chainspec_file: PathBuf,
     },
 }
 
@@ -144,7 +144,7 @@ async fn download_headers(
     txn.commit()?;
 
     let node = Arc::new(
-        NodeBuilder::new(chain_config)
+        NodeBuilder::default()
             .set_stash(env.clone())
             .add_sentry(uri)
             .build()?,
@@ -284,11 +284,7 @@ fn db_walk(
     Ok(())
 }
 
-fn check_table_eq(
-    db1_path: ExpandedPathBuf,
-    db2_path: ExpandedPathBuf,
-    table: String,
-) -> anyhow::Result<()> {
+fn check_table_eq(db1_path: PathBuf, db2_path: PathBuf, table: String) -> anyhow::Result<()> {
     let env1 = hana::kv::mdbx::MdbxEnvironment::<mdbx::NoWriteMap>::open_ro(
         mdbx::Environment::new(),
         &db1_path,
@@ -484,10 +480,7 @@ fn read_storage_changes(data_dir: HanaDataDir, block: BlockNumber) -> anyhow::Re
     Ok(())
 }
 
-fn overwrite_chainspec(
-    data_dir: HanaDataDir,
-    chainspec_file: ExpandedPathBuf,
-) -> anyhow::Result<()> {
+fn overwrite_chainspec(data_dir: HanaDataDir, chainspec_file: PathBuf) -> anyhow::Result<()> {
     let mut s = String::new();
     std::fs::File::open(&chainspec_file)?.read_to_string(&mut s)?;
     let new_chainspec = TableDecode::decode(s.as_bytes())?;

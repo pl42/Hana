@@ -3,7 +3,7 @@
 use super::{stash::Stash, stream::*};
 use crate::{
     models::{BlockNumber, ChainConfig, MessageWithSignature, H256},
-    p2p::types::*,
+    p2p::{node::NodeBuilder, types::*},
 };
 use bytes::{BufMut, BytesMut};
 use dashmap::DashSet;
@@ -55,6 +55,13 @@ pub struct Node {
     pub bad_blocks: DashSet<H256>,
     /// Chain forks.
     pub forks: Vec<u64>,
+}
+
+impl Node {
+    /// Node builder.
+    pub fn builder() -> NodeBuilder {
+        NodeBuilder::default()
+    }
 }
 
 impl Node {

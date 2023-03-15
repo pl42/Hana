@@ -402,6 +402,10 @@ where
                                 record_outliers!(std::cmp::min, &mut minimum_progress);
                                 record_outliers!(std::cmp::max, &mut maximum_progress);
 
+                                if !reached_tip {
+                                    reached_tip_flag = false;
+                                }
+
                                 // Check if we should commit now.
                                 if stage_progress
                                     .saturating_sub(start_progress.map(|v| v.0).unwrap_or(0))
@@ -416,10 +420,6 @@ where
 
                                 // Stage is "done", that is cannot make any more progress at this time.
                                 if done {
-                                    if !reached_tip {
-                                        reached_tip_flag = false;
-                                    }
-
                                     // Break out and move to the next stage.
                                     break stage_progress;
                                 }

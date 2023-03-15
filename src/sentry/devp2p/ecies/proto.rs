@@ -1,4 +1,4 @@
-use super::algorithm::{ECIES, MAX_BODY_SIZE};
+use super::algorithm::ECIES;
 use crate::sentry::devp2p::{errors::ECIESError, transport::Transport, types::PeerId};
 use anyhow::{bail, Context as _};
 use bytes::{Bytes, BytesMut};
@@ -154,17 +154,6 @@ impl Encoder<EgressECIESValue> for ECIESCodec {
                 Ok(())
             }
             EgressECIESValue::Message(data) => {
-                if data.len() > MAX_BODY_SIZE {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        format!(
-                            "body size ({}) exceeds limit ({} bytes)",
-                            data.len(),
-                            MAX_BODY_SIZE
-                        ),
-                    ));
-                }
-
                 self.ecies.write_header(buf, data.len());
                 self.ecies.write_body(buf, &data);
                 Ok(())
