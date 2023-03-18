@@ -473,7 +473,7 @@ fn resolve_tree<B: Backend, K: EnrKeyUnambiguous>(
             }
             trace!("Resolution of tree at {} complete", host);
         } else {
-            debug!("No records found for tree {}", host);
+            warn!("No records found for tree {}", host);
         }
     })
 }

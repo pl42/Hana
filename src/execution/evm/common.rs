@@ -129,14 +129,9 @@ pub struct InterpreterMessage {
     /// The amount of Ether transferred with the message.
     pub value: U256,
 
-    /// Real sender in the call frame
-    ///
-    /// May be different from nominal in case of `CallKind::DelegateCall`
-    pub real_sender: Address,
-
     /// The address of the code to be executed.
     ///
-    /// May be different from the `recipient`
+    /// May be different from the evmc_message::destination (recipient)
     /// in case of `CallKind::CallCode` or `CallKind::DelegateCall`.
     pub code_address: Address,
 }
@@ -163,7 +158,6 @@ impl From<CreateMessage> for InterpreterMessage {
             depth: msg.depth,
             gas: msg.gas,
             recipient: Address::zero(),
-            real_sender: msg.sender,
             code_address: Address::zero(),
             sender: msg.sender,
             input_data: msg.initcode,

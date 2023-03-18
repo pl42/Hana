@@ -132,17 +132,15 @@ where
         fn capture_start(
             &mut self,
             _: u16,
-            _: Address,
-            _: Address,
-            real_sender: Address,
-            code_address: Address,
+            from: Address,
+            to: Address,
             _: MessageKind,
             _: Bytes,
             _: u64,
             _: U256,
         ) {
-            self.touched |= self.addr == real_sender;
-            self.touched |= self.addr == code_address;
+            self.touched |= self.addr == from;
+            self.touched |= self.addr == to;
         }
     }
 
@@ -368,8 +366,6 @@ where
                 depth: u16,
                 from: Address,
                 to: Address,
-                _: Address,
-                _: Address,
                 call_type: MessageKind,
                 _: Bytes,
                 _: u64,

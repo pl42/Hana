@@ -72,7 +72,6 @@ pub fn execute<'db, 'tracer, 'analysis, B: HeaderReader + StateReader>(
             input_data: message.input().clone(),
             value: message.value(),
             gas: gas as i64,
-            real_sender: sender,
             recipient: to,
             code_address: to,
         })?
@@ -137,8 +136,6 @@ where
             message.depth.try_into().unwrap(),
             message.sender,
             contract_addr,
-            message.sender,
-            contract_addr,
             MessageKind::Create { salt: message.salt },
             message.initcode.clone(),
             message.gas.try_into().unwrap(),
@@ -171,9 +168,8 @@ where
             depth: message.depth,
             gas: message.gas,
             recipient: contract_addr,
+            code_address: Address::zero(),
             sender: message.sender,
-            code_address: contract_addr,
-            real_sender: message.sender,
             input_data: Default::default(),
             value: message.endowment,
         };
@@ -238,8 +234,6 @@ where
             message.depth as u16,
             message.sender,
             message.recipient,
-            message.real_sender,
-            message.code_address,
             MessageKind::Call {
                 call_kind: match (message.kind, message.is_static) {
                     (CallKind::Call, true) => super::tracer::CallKind::StaticCall,

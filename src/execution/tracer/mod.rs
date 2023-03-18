@@ -50,10 +50,8 @@ pub trait Tracer: Debug + Send {
     fn capture_start(
         &mut self,
         depth: u16,
-        sender: Address,
-        recipient: Address,
-        real_sender: Address,
-        code_address: Address,
+        from: Address,
+        to: Address,
         call_type: MessageKind,
         input: Bytes,
         gas: u64,
@@ -96,17 +94,15 @@ impl Tracer for CallTracer {
     fn capture_start(
         &mut self,
         _: u16,
-        _: Address,
-        _: Address,
-        real_sender: Address,
-        code_address: Address,
+        from: Address,
+        to: Address,
         _: MessageKind,
         _: Bytes,
         _: u64,
         _: U256,
     ) {
-        self.addresses.entry(real_sender).or_default().from = true;
-        self.addresses.entry(code_address).or_default().to = true;
+        self.addresses.entry(from).or_default().from = true;
+        self.addresses.entry(to).or_default().to = true;
     }
 
     fn capture_self_destruct(&mut self, caller: Address, beneficiary: Address, _: U256) {

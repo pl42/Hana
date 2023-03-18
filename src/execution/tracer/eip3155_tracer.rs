@@ -51,8 +51,6 @@ impl Tracer for StdoutTracer {
         _: u16,
         _: Address,
         _: Address,
-        _: Address,
-        _: Address,
         _: MessageKind,
         _: Bytes,
         gas: u64,

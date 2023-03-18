@@ -22,7 +22,7 @@ use std::{
     num::NonZeroUsize,
     ops::Deref,
     sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Weak,
     },
     time::{Duration, Instant},
@@ -39,6 +39,7 @@ use tokio::{
 };
 use tokio_stream::{StreamExt, StreamMap};
 use tracing::*;
+use uuid::Uuid;
 
 const GRACE_PERIOD_SECS: u64 = 2;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 10;
@@ -67,7 +68,7 @@ struct ConnectedPeerState {
 
 #[derive(Debug)]
 enum PeerConnectionState {
-    Connecting { connection_id: u64 },
+    Connecting { connection_id: Uuid },
     Connected(ConnectedPeerState),
 }
 
@@ -476,7 +477,6 @@ pub struct Swarm<C: CapabilityServer> {
     tasks: Arc<TaskGroup>,
 
     streams: Arc<Mutex<PeerStreams>>,
-    connection_id_counter: AtomicU64,
 
     currently_connecting: Arc<AtomicUsize>,
 
@@ -640,7 +640,6 @@ impl<C: CapabilityServer> Swarm<C> {
         let server = Arc::new(Self {
             tasks: tasks.clone(),
             streams,
-            connection_id_counter: Default::default(),
             currently_connecting: Default::default(),
             node_filter,
             capabilities,
@@ -753,7 +752,7 @@ impl<C: CapabilityServer> Swarm<C> {
         let port = self.port;
 
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let connection_id = self.connection_id_counter.fetch_add(1, Ordering::SeqCst);
+        let connection_id = Uuid::new_v4();
         let currently_connecting = self.currently_connecting.clone();
 
         // Start reaper task that will terminate this connection if connection future gets dropped.

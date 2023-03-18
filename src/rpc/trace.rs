@@ -256,8 +256,6 @@ where
         },
     };
 
-    trace!("Replaying {} calls on top of historical block {historical_block:?}, of block {block_number:?} with header {header:?}", calls.len());
-
     let block_spec = chain_spec.collect_block_spec(block_number);
     let mut buffer = Buffer::new(txn, historical_block);
 
@@ -269,7 +267,7 @@ where
             let mut buffer = LoggingBuffer::new(&mut buffer);
             let mut state = IntraBlockState::new(&mut buffer);
 
-            let mut tracer = AdhocTracer::new();
+            let mut tracer = AdhocTracer::new(trace_types.contains(&types::TraceType::Trace));
 
             let mut gas_used = 0;
             let (output, _) = execute_transaction(
@@ -285,15 +283,7 @@ where
             )?;
 
             state.write_to_state_same_block()?;
-            (
-                output,
-                buffer.into_updates(),
-                if trace_types.contains(&types::TraceType::Trace) {
-                    Some(tracer.into_trace())
-                } else {
-                    None
-                },
-            )
+            (output, buffer.into_updates(), tracer.into_trace())
         };
 
         let mut state_diff = if trace_types.contains(&types::TraceType::StateDiff) {
@@ -879,7 +869,7 @@ where
                         .chain(once((sender, message, trace_types)))
                         .collect(),None,
                 )?.0
-                .pop().unwrap());
+                .remove(index));
             }
 
             Err(RpcError::Custom("tx not found".to_string()))
