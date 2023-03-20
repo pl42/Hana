@@ -77,8 +77,9 @@ impl EvmTester {
                 depth: 0,
                 gas: i64::MAX,
                 recipient: Address::zero(),
-                code_address: Address::zero(),
                 sender: Address::zero(),
+                real_sender: Address::zero(),
+                code_address: Address::zero(),
                 input_data: Bytes::new(),
                 value: U256::ZERO,
             },
@@ -237,9 +238,9 @@ impl EvmTester {
             assert_eq!(&*output.output_data, expected_data);
         }
 
-        (self.inspect_output_fn)(&*output.output_data);
+        (self.inspect_output_fn)(&output.output_data);
         (self.inspect_host_fn)(&host, &self.message);
-        (self.inspect_fn)(&host, &self.message, &*output.output_data);
+        (self.inspect_fn)(&host, &self.message, &output.output_data);
 
         output
     }

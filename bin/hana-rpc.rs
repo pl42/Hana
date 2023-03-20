@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
         MdbxEnvironment::<NoWriteMap>::open_ro(
             mdbx::Environment::new(),
             &opt.datadir,
-            &*hana::kv::tables::CHAINDATA_TABLES,
+            &hana::kv::tables::CHAINDATA_TABLES,
         )?
         .into(),
     );

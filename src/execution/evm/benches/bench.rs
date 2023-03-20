@@ -472,8 +472,9 @@ fn prepare(
             is_static: false,
             depth: 0,
             recipient: Address::zero(),
-            code_address: Address::zero(),
             sender: Address::zero(),
+            real_sender: Address::zero(),
+            code_address: Address::zero(),
             input_data,
             value: U256::ZERO,
         },
@@ -540,7 +541,7 @@ fn main_benchmarks(c: &mut Criterion) {
             }
 
             let expected_output = hex::decode(&params.out).unwrap();
-            let analyzed_code = AnalyzedCode::analyze(&*code);
+            let analyzed_code = AnalyzedCode::analyze(&code);
             let input_data = Bytes::from(input_data);
 
             let res = execute(prepare(analyzed_code.clone(), input_data.clone()));
