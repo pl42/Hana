@@ -152,6 +152,9 @@ fn main() -> anyhow::Result<()> {
                     &CHAINDATA_TABLES,
                     &hana_chain_data_dir,
                 )?);
+
+                hana::database_version::migrate_database(&db)?;
+
                 let chainspec = {
                     let span = span!(Level::INFO, "", " Genesis initialization ");
                     let _g = span.enter();
