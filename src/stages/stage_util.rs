@@ -135,7 +135,6 @@ where
                     },
                     new_bm,
                 )?;
-                break;
             }
 
             bm = cursor
