@@ -32,7 +32,7 @@ ARG UID=1000
 ARG GID=1000
 
 RUN groupadd -g $GID hana
-RUN adduser -D -u $UID -g $GID hana
+RUN adduser --uid $UID --gid $GID --disabled-password hana
 USER hana
 RUN mkdir -p ~/.local/share/hana
 
