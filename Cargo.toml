@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Peggy Liang <pgl1998@proton.me>"]
 edition = "2021"
 description = "Next-generation Ethereum implementation"
-license = "GPL-3.0-only"
+license = "AGPL-3.0-only"
 default-run = "hana"
 
 [dependencies]
